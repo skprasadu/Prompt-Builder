@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "RAG Util",
+  "productName": "Prompt_Builder",
   "version": "0.1.0",
   "identifier": "com.tcengine.repo-prompt-ui",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "RAG Util",
+        "title": "Prompt_Builder",
         "width": 800,
         "height": 600
       }

@@ -76,6 +76,7 @@ export default function PromptBuilder(): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
+  const [systemPrompt, setSystemPrompt] = useState<string>(""); // NEW
   const [text, setText] = useState<string>("");
   const [tokenCount, setTokenCount] = useState<number>(0);
   const [busy, setBusy] = useState<boolean>(false);
@@ -114,10 +115,43 @@ export default function PromptBuilder(): JSX.Element {
   const [apiRows, setApiRows] = useState<Record<string, string>[]>([]);
 
   const debounceRef = useRef<number | null>(null);
+  const systemPromptSaveRef = useRef<number | null>(null); // NEW
 
   useEffect(() => {
     getCurrentWindow().setTitle("Rapid Prompt - Workbench").catch(() => { });
   }, []);
+
+  // Load persisted System Prompt from backend (if any)
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await invoke<string>("load_system_prompt");
+        if (typeof saved === "string") {
+          setSystemPrompt(saved);
+        }
+      } catch (e) {
+        console.warn("load_system_prompt failed:", e);
+      }
+    })();
+  }, []);
+
+  // Persist System Prompt whenever it changes (debounced)
+  useEffect(() => {
+    if (systemPromptSaveRef.current) {
+      window.clearTimeout(systemPromptSaveRef.current);
+    }
+    systemPromptSaveRef.current = window.setTimeout(() => {
+      invoke("save_system_prompt", { value: systemPrompt }).catch((e) => {
+        console.warn("save_system_prompt failed:", e);
+      });
+    }, 400);
+
+    return () => {
+      if (systemPromptSaveRef.current) {
+        window.clearTimeout(systemPromptSaveRef.current);
+      }
+    };
+  }, [systemPrompt]);
 
   // Auto-expand ancestor directories so selected files are visible in the tree.
   useEffect(() => {
@@ -381,16 +415,15 @@ export default function PromptBuilder(): JSX.Element {
   /* ---------------- Copy & tokens ---------------- */
 
   function outputWithFolderSelections(files: FileValue[], opts: OutputOptions): string {
-    return formatOutput(text, files, opts);
+    return formatOutput(text, files, { ...opts, systemPrompt });
   }
+
 
   // --- replace your existing outputWithUnit() with this version ---
 
   function outputWithUnit(unit: PromptUnit | null): string {
     let body = unit?.body ?? "";
 
-    // If we're in Excel mode and the user selected description columns,
-    // reconstruct a labeled block where the *last* selected column may be multi-line.
     if (unit && mode === "excel" && excelDescCols.length > 0) {
       const vals = splitIntoPartsKeepRemainder(unit.body, excelDescCols.length);
       body = renderLabeledList(excelDescCols, vals);
@@ -400,6 +433,7 @@ export default function PromptBuilder(): JSX.Element {
       includeTree: false,
       treeRoot: null,
       unit: unit ? { title: unit.id, body } : null,
+      systemPrompt, // NEW
     };
     return formatOutput(text, [], opts);
   }
@@ -437,7 +471,7 @@ export default function PromptBuilder(): JSX.Element {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, text, selected, includeTree, units, unitIndex, tree]);
+  }, [mode, text, systemPrompt, selected, includeTree, units, unitIndex, tree]);
 
   async function copyPrompt(): Promise<void> {
     setError(null);
@@ -829,31 +863,51 @@ export default function PromptBuilder(): JSX.Element {
         sx={{
           p: 2,
           display: "grid",
-          gridTemplateRows: "auto minmax(0,1fr) auto auto",
+          // system prompt row + header row + main textarea + mode panel + footer
+          gridTemplateRows: "auto auto minmax(0,1fr) auto auto",
           gap: 1.25,
           minWidth: 0,
           minHeight: 0,
           overflow: "hidden",
         }}
       >
+        {/* System Prompt (global across sessions) */}
+        <Box
+          sx={{
+            mb: 0.5,
+            p: 1.25,
+            borderRadius: 1,
+            border: 1,
+            borderColor: "divider",
+            bgcolor: "background.default",
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            System Prompt
+          </Typography>
+          <TextField
+            placeholder="Optional system instructions applied before every run"
+            multiline
+            minRows={3}
+            maxRows={6}
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.currentTarget.value)}
+            fullWidth
+            InputProps={{
+              sx: {
+                fontFamily:
+                  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+                fontSize: 13,
+              },
+            }}
+          />
+        </Box>
+
+        {/* Header row */}
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography variant="h5" sx={{ flex: 1 }}>
             Rapid Prompt - Workbench
           </Typography>
-          {/* Mode switch */}
-          {/*<ToggleButtonGroup
-            size="small"
-            exclusive
-            value={mode}
-            onChange={(_, v) => {
-              if (v) setMode(v);
-            }}
-          >
-            <ToggleButton value="folder">Folder</ToggleButton>
-            <ToggleButton value="excel">Excel</ToggleButton>
-            <ToggleButton value="block">Block</ToggleButton>
-          </ToggleButtonGroup>*/}
-          {/* Save/Load */}
           <Button
             size="small"
             variant="outlined"
@@ -871,13 +925,12 @@ export default function PromptBuilder(): JSX.Element {
           >
             Save
           </Button>
-          {/* 🔹 Small brand logo: top-right, low real estate, hidden on xs */}
           <Box sx={{ ml: 1, display: { xs: "none", sm: "inline-flex" }, alignItems: "center" }}>
             <img src={brandSvg} alt="Brand" height={36} style={{ opacity: 0.9 }} />
           </Box>
         </Stack>
 
-        {/* Common textarea */}
+        {/* User prompt textarea */}
         <Box sx={{ minHeight: 0, overflow: "auto" }}>
           <TextField
             placeholder="Type your prompt here"

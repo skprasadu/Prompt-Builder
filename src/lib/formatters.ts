@@ -9,6 +9,7 @@ export interface OutputOptions {
 
   // NEW: when in Excel/Block mode we add one focused unit
   unit?: { title?: string; body: string } | null;
+  systemPrompt?: string; // NEW
 }
 
 export function formatOutput(
@@ -17,6 +18,12 @@ export function formatOutput(
   options: OutputOptions = {}
 ): string {
   const parts: string[] = [];
+
+  // NEW: System Prompt section (if any)
+  const sys = (options.systemPrompt ?? "").trim();
+  if (sys.length > 0) {
+    parts.push("# System Prompt", "", sys, "");
+  }
 
   // Prompt
   parts.push("# Prompt", "", textarea.trimEnd(), "");

@@ -1,3 +1,4 @@
+use tauri::{AppHandle, Runtime, Manager}; // NEW
 use serde::{Serialize, Deserialize};
 use std::{
   fs::File,
@@ -5,7 +6,6 @@ use std::{
   path::{Path, PathBuf},
 };
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use regex::Regex;
 use calamine::{Reader, open_workbook_auto, DataType};
 use scraper::{Html, Selector};
 
@@ -42,6 +42,8 @@ struct ApiTable {
   // each row is a flat map of column -> stringified value
   rows: Vec<HashMap<String, String>>,
 }
+
+const SYSTEM_PROMPT_FILENAME: &str = "rapid-prompt-system-prompt.txt";
 
 /* ====================== .gitignore support (root only) ====================== */
 
@@ -193,6 +195,38 @@ fn read_ascii_files(paths: Vec<String>, max_bytes: Option<usize>) -> Result<Vec<
   Ok(out)
 }
 
+#[tauri::command]
+fn load_system_prompt(app: AppHandle) -> Result<String, String> {
+  let config_dir = app
+    .path()
+    .app_config_dir()
+    .map_err(|e| e.to_string())?;
+  let file_path = config_dir.join(SYSTEM_PROMPT_FILENAME);
+
+  if !file_path.exists() {
+    return Ok(String::new());
+  }
+
+  let contents = fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+  Ok(contents)
+}
+
+#[tauri::command]
+fn save_system_prompt(app: AppHandle, value: String) -> Result<(), String> {
+  let config_dir = app
+    .path()
+    .app_config_dir()
+    .map_err(|e| e.to_string())?;
+
+  if !config_dir.exists() {
+    create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+  }
+
+  let file_path = config_dir.join(SYSTEM_PROMPT_FILENAME);
+  fs::write(&file_path, value).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 /* ====================== Entry point wired for main.rs ====================== */
 
 pub fn run() {
@@ -211,7 +245,9 @@ pub fn run() {
       extract_html_blocks,
       extract_api_units,            // <— add this line
       fetch_api_table,            // <-- add this
-      fetch_api_table_from_url    // ⬅️ add this
+      fetch_api_table_from_url,
+      load_system_prompt,       // NEW
+      save_system_prompt        // NEW
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
