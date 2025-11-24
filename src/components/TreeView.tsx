@@ -22,6 +22,47 @@ export interface TreeViewProps {
   onToggleFile: (path: string, checked: boolean) => void;
 }
 
+function getDirSelectionState(
+  node: Node,
+  selected: ReadonlySet<string>
+): { checked: boolean; indeterminate: boolean } {
+  if (!isDirNode(node) || node.children.length === 0) {
+    return { checked: false, indeterminate: false };
+  }
+
+  let totalFiles = 0;
+  let selectedFiles = 0;
+
+  const stack: Node[] = [...node.children];
+
+  while (stack.length > 0) {
+    const current = stack.pop() as Node;
+    if (isDirNode(current)) {
+      stack.push(...current.children);
+    } else {
+      totalFiles += 1;
+      if (selected.has(current.path)) {
+        selectedFiles += 1;
+      }
+    }
+  }
+
+  if (totalFiles === 0) {
+    return { checked: false, indeterminate: false };
+  }
+
+  if (selectedFiles === 0) {
+    return { checked: false, indeterminate: false };
+  }
+
+  if (selectedFiles === totalFiles) {
+    return { checked: true, indeterminate: false };
+  }
+
+  // Some but not all files selected
+  return { checked: false, indeterminate: true };
+}
+
 export const TreeView = memo(function TreeView(props: TreeViewProps) {
   return (
     <Box>
@@ -41,6 +82,8 @@ function TreeNode(props: TreeNodeProps) {
 
   if (isDirNode(node)) {
     const isOpen = expanded.has(node.path);
+    const { checked, indeterminate } = getDirSelectionState(node, selected);
+
     return (
       <Box sx={{ pl: pad }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ py: 0.25 }}>
@@ -51,6 +94,15 @@ function TreeNode(props: TreeNodeProps) {
           >
             {isOpen ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
           </IconButton>
+
+          <Checkbox
+            size="small"
+            checked={checked}
+            indeterminate={indeterminate}
+            onChange={(e) => onToggleFile(node.path, e.currentTarget.checked)}
+            inputProps={{ "aria-label": `Select folder ${node.name}` }}
+          />
+
           <FolderIcon fontSize="small" color="action" />
           <Typography
             variant="body2"

@@ -224,14 +224,62 @@ export default function PromptBuilder(): JSX.Element {
       return next;
     });
   }
+
+  function findNodeByPath(root: Node, targetPath: string): Node | null {
+    if (root.path === targetPath) {
+      return root;
+    }
+
+    if (isDirNode(root)) {
+      for (const child of root.children) {
+        const found = findNodeByPath(child, targetPath);
+        if (found) {
+          return found;
+        }
+      }
+    }
+
+    return null;
+  }
+
   function toggleFile(path: string, checked: boolean): void {
     setSelected((prev) => {
       const next = new Set(prev);
-      checked ? next.add(path) : next.delete(path);
+
+      // If we dont have a tree yet, fall back to simple behavior.
+      if (!tree) {
+        if (checked) {
+          next.add(path);
+        } else {
+          next.delete(path);
+        }
+        return next;
+      }
+
+      const target = findNodeByPath(tree, path);
+
+      // If we cant find the node or its a file, just toggle that single path.
+      if (!target || !isDirNode(target)) {
+        if (checked) {
+          next.add(path);
+        } else {
+          next.delete(path);
+        }
+        return next;
+      }
+
+      // Directory: select/deselect all descendant files.
+      const filePaths = collectFilePaths(target);
+
+      if (checked) {
+        filePaths.forEach((p) => next.add(p));
+      } else {
+        filePaths.forEach((p) => next.delete(p));
+      }
+
       return next;
     });
   }
-
   /* ---------------- Excel mode ---------------- */
 
   async function chooseExcel(): Promise<void> {
