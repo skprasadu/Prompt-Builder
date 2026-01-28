@@ -47,6 +47,12 @@ const SYSTEM_PROMPT_FILENAME: &str = "rapid-prompt-system-prompt.txt";
 
 /* ====================== .gitignore support (root only) ====================== */
 
+const HIDDEN_DIR_NAMES: &[&str] = &[".git" /*, ".svn", ".hg" */];
+
+fn is_hidden_dir(name: &str) -> bool {
+  HIDDEN_DIR_NAMES.iter().any(|&n| n == name)
+}
+
 fn load_root_gitignore(root: &Path) -> Option<Gitignore> {
   let gi_path = root.join(".gitignore");
   if !gi_path.is_file() {
@@ -98,19 +104,20 @@ fn build_tree_rec(root: &Path, dir: &Path, gi: Option<&Gitignore>) -> std::io::R
       Err(_) => continue,
     };
     let p = ent.path();
-    let fname = ent.file_name();
-    let fname_str = fname.to_string_lossy();
-
-    // Skip dotfiles/dirs for readability (you can remove this if you want full fidelity)
-    if fname_str.starts_with('.') {
-      continue;
-    }
 
     let md = match ent.metadata() {
       Ok(m) => m,
       Err(_) => continue,
     };
     let is_dir = md.is_dir();
+
+    let fname = ent.file_name();
+    let fname_str = fname.to_string_lossy();
+
+    // 🔒 Always hide VCS internals, regardless of .gitignore
+    if is_dir && is_hidden_dir(&fname_str) {
+      continue;
+    }
 
     // Apply root .gitignore rules
     if is_ignored(root, gi, &p, is_dir) {

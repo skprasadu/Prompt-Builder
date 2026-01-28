@@ -20,6 +20,7 @@ import {
   importSession,
   resolveSelected,
   resolveUnitSource,
+  toRelative,            // <-- add this
 } from "../lib/session";
 
 import type {
@@ -52,6 +53,12 @@ import {
   InputLabel,
   ToggleButton,
   ToggleButtonGroup,
+  IconButton,
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
@@ -61,6 +68,7 @@ import UploadFileIcon from "@mui/icons-material/UploadFile";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import brandSvg from "../assets/brand.svg";
 
 function normalizeRootFromRust(raw: Node): Node {
@@ -116,6 +124,7 @@ export default function PromptBuilder(): JSX.Element {
 
   const debounceRef = useRef<number | null>(null);
   const systemPromptSaveRef = useRef<number | null>(null); // NEW
+  const [selectedDialogOpen, setSelectedDialogOpen] = useState<boolean>(false);
 
   useEffect(() => {
     getCurrentWindow().setTitle("Rapid Prompt - Workbench").catch(() => { });
@@ -821,6 +830,22 @@ export default function PromptBuilder(): JSX.Element {
     }
     return lines.join("\n");
   }
+
+  // ----- Derived view of selected files for the info icon / dialog -----
+  const selectedFilesArray = Array.from(selected).sort();
+  const selectedFilesForDisplay = rootPath
+    ? selectedFilesArray.map((abs) => toRelative(rootPath, abs))
+    : selectedFilesArray;
+
+  const selectedCount = selectedFilesForDisplay.length;
+
+  const selectedTooltipTitle =
+    selectedCount === 0
+      ? "No files selected"
+      : selectedCount <= 12
+        ? selectedFilesForDisplay.join("\n")
+        : `${selectedFilesForDisplay.slice(0, 12).join("\n")}\n… (${selectedCount - 12} more)`;
+
   /* ---------------- UI ---------------- */
 
   return (
@@ -1023,7 +1048,37 @@ export default function PromptBuilder(): JSX.Element {
               >
                 {busy ? "Working" : "Copy prompt"}
               </Button>
+
               <Chip label={`Tokens: ${tokenCount}`} />
+
+              {/* "!" info icon for selected files */}
+              <Tooltip
+                title={
+                  <Box
+                    component="pre"
+                    sx={{
+                      m: 0,
+                      whiteSpace: "pre-wrap",
+                      fontFamily:
+                        'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+                      fontSize: 11,
+                    }}
+                  >
+                    {selectedTooltipTitle}
+                  </Box>
+                }
+                placement="top"
+                arrow
+              >
+                <IconButton
+                  size="small"
+                  aria-label="Show selected files"
+                  onClick={() => setSelectedDialogOpen(true)}
+                >
+                  <InfoOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+
               <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: { sm: 2 } }}>
                 <Checkbox
                   size="small"
@@ -1407,6 +1462,41 @@ export default function PromptBuilder(): JSX.Element {
         )}
 
         {error && <Alert severity="error">{error}</Alert>}
+
+        {/* Selected files dialog (folder mode helper) */}
+        <Dialog
+          open={selectedDialogOpen}
+          onClose={() => setSelectedDialogOpen(false)}
+          fullWidth
+          maxWidth="sm"
+        >
+          <DialogTitle>Selected files</DialogTitle>
+          <DialogContent dividers>
+            {selectedCount === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No files selected.
+              </Typography>
+            ) : (
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  maxHeight: 360,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+                  fontSize: 12,
+                }}
+              >
+                {selectedFilesForDisplay.join("\n")}
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setSelectedDialogOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
 
         <Divider />
         <Typography variant="body2" color="text.secondary">

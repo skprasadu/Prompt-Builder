@@ -19,7 +19,7 @@ export function formatOutput(
 ): string {
   const parts: string[] = [];
 
-  // NEW: System Prompt section (if any)
+  // System Prompt
   const sys = (options.systemPrompt ?? "").trim();
   if (sys.length > 0) {
     parts.push("# System Prompt", "", sys, "");
@@ -36,7 +36,16 @@ export function formatOutput(
     parts.push(fence, options.unit.body.replace(/\r\n/g, "\n"), fence, "");
   }
 
-  // Files (Folder mode)
+  // NEW: overview of selected file paths (folder mode convenience)
+  if (files.length > 0) {
+    parts.push("## File paths", "");
+    for (const { filePath } of files) {
+      parts.push(`- ${filePath}`);
+    }
+    parts.push("");
+  }
+
+  // Files (Folder mode)  unchanged behavior for content
   parts.push("## Files", "");
   if (files.length === 0) {
     parts.push("_(no files selected)_", "");
