@@ -11,6 +11,7 @@ import { formatOutput, type OutputOptions } from "../lib/formatters";
 import { countTokens } from "../lib/tokenize";
 import { toErrorMessage } from "../lib/errors";
 import { TreeView } from "../components/TreeView";
+import { ResizableSplitter } from "../components/ResizableSplitter";
 import { collectFilePaths } from "../lib/tree";
 
 import type { SessionFileV4 } from "../types/session";
@@ -76,6 +77,11 @@ function normalizeRootFromRust(raw: Node): Node {
   return raw;
 }
 
+const FOLDER_PANEL_DEFAULT_WIDTH = 360;
+const FOLDER_PANEL_MIN_WIDTH = 280;
+const FOLDER_PANEL_MAX_WIDTH = 640;
+const FOLDER_PANEL_SPLITTER_WIDTH = 8;
+
 export default function PromptBuilder(): JSX.Element {
   const [mode, setMode] = useState<Mode>("folder");
 
@@ -121,6 +127,9 @@ export default function PromptBuilder(): JSX.Element {
   const [apiKeyColumn, setApiKeyColumn] = useState<string>("");
   const [apiDescColumns, setApiDescColumns] = useState<string[]>([]);
   const [apiRows, setApiRows] = useState<Record<string, string>[]>([]);
+  const [folderPanelWidth, setFolderPanelWidth] = useState<number>(
+    FOLDER_PANEL_DEFAULT_WIDTH
+  );
 
   const debounceRef = useRef<number | null>(null);
   const systemPromptSaveRef = useRef<number | null>(null); // NEW
@@ -853,9 +862,15 @@ export default function PromptBuilder(): JSX.Element {
       sx={{
         display: "grid",
         gridTemplateColumns: {
-          xs: mode === "folder" ? "1fr" : "1fr", // stack on phones
-          sm: mode === "folder" ? "minmax(220px, 300px) 1fr" : "1fr",
-          md: mode === "folder" ? "360px 1fr" : "1fr",
+          xs: "1fr",
+          sm:
+            mode === "folder"
+              ? `${folderPanelWidth}px ${FOLDER_PANEL_SPLITTER_WIDTH}px minmax(0, 1fr)`
+              : "1fr",
+          md:
+            mode === "folder"
+              ? `${folderPanelWidth}px ${FOLDER_PANEL_SPLITTER_WIDTH}px minmax(0, 1fr)`
+              : "1fr",
         },
         //height: "100vh",
         //width: "100vw",
@@ -869,7 +884,10 @@ export default function PromptBuilder(): JSX.Element {
           borderColor: "divider",
           display: mode === "folder" ? "flex" : "none",
           flexDirection: "column",
-          minWidth: 280,
+          minWidth: FOLDER_PANEL_MIN_WIDTH,
+          maxWidth: FOLDER_PANEL_MAX_WIDTH,
+          width: "100%",
+          overflow: "hidden",
         }}
       >
         <Stack
@@ -931,6 +949,16 @@ export default function PromptBuilder(): JSX.Element {
         </Box>
       </Box>
 
+      <ResizableSplitter
+        visible={mode === "folder"}
+        width={folderPanelWidth}
+        minWidth={FOLDER_PANEL_MIN_WIDTH}
+        maxWidth={FOLDER_PANEL_MAX_WIDTH}
+        splitterWidth={FOLDER_PANEL_SPLITTER_WIDTH}
+        onWidthChange={setFolderPanelWidth}
+        label="Resize folder tree panel"
+        tooltip="Drag to resize folder tree"
+      />
       {/* Right panel */}
       <Box
         sx={{
