@@ -12,7 +12,9 @@ import { countTokens } from "../lib/tokenize";
 import { toErrorMessage } from "../lib/errors";
 import { TreeView } from "../components/TreeView";
 import { ResizableSplitter } from "../components/ResizableSplitter";
+import { FolderPathSelector } from "../components/FolderPathSelector";
 import { collectFilePaths } from "../lib/tree";
+import { resolveTreeSelectionFromPathInput } from "../lib/pathSelection";
 
 import type { SessionFileV4 } from "../types/session";
 import {
@@ -130,6 +132,9 @@ export default function PromptBuilder(): JSX.Element {
   const [folderPanelWidth, setFolderPanelWidth] = useState<number>(
     FOLDER_PANEL_DEFAULT_WIDTH
   );
+  const [folderPathSelectorOpen, setFolderPathSelectorOpen] = useState<boolean>(false);
+  const [folderPathInput, setFolderPathInput] = useState<string>("");
+  const [folderPathSelectionStatus, setFolderPathSelectionStatus] = useState<string>("");
 
   const debounceRef = useRef<number | null>(null);
   const systemPromptSaveRef = useRef<number | null>(null); // NEW
@@ -297,6 +302,72 @@ export default function PromptBuilder(): JSX.Element {
 
       return next;
     });
+  }
+
+  function updateFolderPathInput(value: string): void {
+    setFolderPathInput(value);
+    if (folderPathSelectionStatus) {
+      setFolderPathSelectionStatus("");
+    }
+  }
+
+  function applyFolderPathSelection(): void {
+    if (!rootPath) {
+      setError("Choose a folder before applying path selections.");
+      return;
+    }
+
+    if (!tree) {
+      setError("The folder tree is not loaded. Choose a folder or refresh the tree before applying path selections.");
+      return;
+    }
+
+    const result = resolveTreeSelectionFromPathInput({
+      rootPath,
+      tree,
+      input: folderPathInput,
+    });
+
+    if (result.inputCount === 0) {
+      setFolderPathSelectionStatus("");
+      setError("Paste at least one file or folder path before applying.");
+      return;
+    }
+
+    if (result.matchedInputs.length === 0) {
+      setFolderPathSelectionStatus("No matching paths found.");
+      setError(formatUnmatchedPathMessage(result.unmatchedInputs));
+      return;
+    }
+
+    setSelected(new Set(result.selectedFilePaths));
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.add(tree.path);
+      result.expandedDirPaths.forEach((path) => next.add(path));
+      return next;
+    });
+
+    const selectedLabel = result.selectedFilePaths.length === 1
+      ? "1 file"
+      : `${result.selectedFilePaths.length} files`;
+    const matchedLabel = result.matchedInputs.length === 1
+      ? "1 path"
+      : `${result.matchedInputs.length} paths`;
+
+    setFolderPathSelectionStatus(`Selected ${selectedLabel} from ${matchedLabel}.`);
+
+    if (result.unmatchedInputs.length > 0) {
+      setError(formatUnmatchedPathMessage(result.unmatchedInputs));
+    } else {
+      setError(null);
+    }
+  }
+
+  function formatUnmatchedPathMessage(paths: string[]): string {
+    const shown = paths.slice(0, 5).join("; ");
+    const suffix = paths.length > 5 ? `; +${paths.length - 5} more` : "";
+    return `Paths not found in the loaded folder tree: ${shown}${suffix}. Add the missing file/folder under the chosen folder or correct the path.`;
   }
   /* ---------------- Excel mode ---------------- */
 
@@ -925,6 +996,15 @@ export default function PromptBuilder(): JSX.Element {
             </Typography>
           )}
         </Stack>
+        <FolderPathSelector
+          open={folderPathSelectorOpen}
+          value={folderPathInput}
+          disabled={busy || !rootPath || !tree}
+          statusText={folderPathSelectionStatus}
+          onOpenChange={setFolderPathSelectorOpen}
+          onValueChange={updateFolderPathInput}
+          onApply={applyFolderPathSelection}
+        />
         {busy && !tree && <LinearBusy />}
         <Box sx={{ flex: 1, overflow: "auto", p: 1 }}>
           {busy && !tree && (
