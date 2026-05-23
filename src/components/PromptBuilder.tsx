@@ -1044,14 +1044,90 @@ export default function PromptBuilder(): JSX.Element {
         sx={{
           p: 2,
           display: "grid",
-          // system prompt row + header row + main textarea + mode panel + footer
-          gridTemplateRows: "auto auto minmax(0,1fr) auto auto",
+          // folder actions + system prompt + header row + main textarea + mode panel + footer
+          gridTemplateRows:
+            mode === "folder"
+              ? "auto auto auto minmax(0,1fr) auto auto"
+              : "auto auto minmax(0,1fr) auto auto",
           gap: 1.25,
           minWidth: 0,
           minHeight: 0,
           overflow: "hidden",
         }}
       >
+
+        {mode === "folder" && (
+          <Box
+            sx={{
+              mb: 0.5,
+              p: 1,
+              borderRadius: 1,
+              border: 1,
+              borderColor: "divider",
+              bgcolor: "background.paper",
+            }}
+          >
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              sx={{ flexWrap: "wrap", rowGap: 1 }}
+            >
+              <Tooltip title={busy ? "Preparing prompt" : "Copy prompt"} arrow>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label="Copy prompt"
+                    disabled={busy}
+                    onClick={() => void copyPrompt()}
+                    color="primary"
+                  >
+                    <ContentCopyIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Chip label={`Tokens: ${tokenCount}`} size="small" />
+
+              <Tooltip
+                title={
+                  <Box
+                    component="pre"
+                    sx={{
+                      m: 0,
+                      whiteSpace: "pre-wrap",
+                      fontFamily:
+                        'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+                      fontSize: 11,
+                    }}
+                  >
+                    {selectedTooltipTitle}
+                  </Box>
+                }
+                placement="bottom"
+                arrow
+              >
+                <IconButton
+                  size="small"
+                  aria-label="Show selected files"
+                  onClick={() => setSelectedDialogOpen(true)}
+                >
+                  <InfoOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Checkbox
+                  size="small"
+                  checked={includeTree}
+                  onChange={(e) => setIncludeTree(e.currentTarget.checked)}
+                />
+                <Typography variant="body2">Include folder tree</Typography>
+              </Stack>
+            </Stack>
+          </Box>
+        )}
+
         {/* System Prompt (global across sessions) */}
         <Box
           sx={{
@@ -1131,74 +1207,6 @@ export default function PromptBuilder(): JSX.Element {
         </Box>
 
         {/* Mode panels */}
-        {mode === "folder" && (
-          <Box
-            sx={{
-              position: "sticky",
-              bottom: 0,
-              bgcolor: "background.paper",
-              borderTop: 1,
-              borderColor: "divider",
-              py: 1,
-              zIndex: 1,
-            }}
-          >
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              spacing={1}
-              alignItems={{ xs: "stretch", sm: "center" }}
-            >
-              <Button
-                variant="contained"
-                startIcon={<ContentCopyIcon />}
-                disabled={busy}
-                onClick={() => void copyPrompt()}
-              >
-                {busy ? "Working" : "Copy prompt"}
-              </Button>
-
-              <Chip label={`Tokens: ${tokenCount}`} />
-
-              {/* "!" info icon for selected files */}
-              <Tooltip
-                title={
-                  <Box
-                    component="pre"
-                    sx={{
-                      m: 0,
-                      whiteSpace: "pre-wrap",
-                      fontFamily:
-                        'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-                      fontSize: 11,
-                    }}
-                  >
-                    {selectedTooltipTitle}
-                  </Box>
-                }
-                placement="top"
-                arrow
-              >
-                <IconButton
-                  size="small"
-                  aria-label="Show selected files"
-                  onClick={() => setSelectedDialogOpen(true)}
-                >
-                  <InfoOutlinedIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-
-              <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: { sm: 2 } }}>
-                <Checkbox
-                  size="small"
-                  checked={includeTree}
-                  onChange={(e) => setIncludeTree(e.currentTarget.checked)}
-                />
-                <Typography variant="body2">Include folder tree</Typography>
-              </Stack>
-            </Stack>
-          </Box>
-        )}
-
         {mode === "excel" && (
           <>
             {/* Excel: pick file + sheet + columns */}
