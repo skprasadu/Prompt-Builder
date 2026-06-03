@@ -1,35 +1,28 @@
 {
-  "name": "repo-prompt-ui",
+  "name": "rapid-prompt-monorepo",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^7.3.5",
-    "@mui/lab": "^7.0.1-beta.19",
-    "@mui/material": "^7.3.5",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
-    "@tauri-apps/plugin-dialog": "^2.4.2",
-    "@tauri-apps/plugin-fs": "^2.4.4",
-    "@tauri-apps/plugin-opener": "^2",
-    "gpt-tokenizer": "^3.4.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "desktop:dev": "npm run desktop:repair-electron && npm --workspace @rapid-prompt/desktop run dev",
+    "desktop:build": "npm --workspace @rapid-prompt/desktop run build",
+    "desktop:preview": "npm --workspace @rapid-prompt/desktop run preview",
+    "api:dev": "npm --workspace @rapid-prompt/prompt-sync-api run dev",
+    "api:build": "npm --workspace @rapid-prompt/prompt-sync-api run build",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "desktop:repair-electron": "node tools/repair-electron-install.mjs",
+    "desktop:package:mac": "npm --workspace @rapid-prompt/desktop run package:mac",
+    "desktop:package:mac:dir": "npm --workspace @rapid-prompt/desktop run package:mac:dir",
+    "clean": "node tools/clean-rebuild.mjs",
+    "rebuild:fresh": "node tools/clean-rebuild.mjs --install --repair-electron --build",
+    "rebuild:fresh:mac": "node tools/clean-rebuild.mjs --install --repair-electron --package-mac",
+    "rebuild:fresh:keep-lock": "node tools/clean-rebuild.mjs --keep-lockfiles --install --repair-electron --build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.4"
-  }
+    "electron": "42.3.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }

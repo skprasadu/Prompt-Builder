@@ -1,0 +1,26 @@
+electronVersion: 42.3.0
+appId: com.rapidprompt.workbench
+productName: Rapid Prompt Workbench
+
+directories:
+  output: release
+  buildResources: buildResources
+
+files:
+  - out/main/**
+  - out/preload/**
+  - out/renderer/**
+  - package.json
+  - "!**/*.map"
+
+asar: true
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - dmg
+
+dmg:
+  artifactName: Rapid-Prompt-Workbench-${version}-${arch}.${ext}
