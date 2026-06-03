@@ -1,5 +1,5 @@
-
 import {
+  Alert,
   Box,
   Collapse,
   IconButton,
@@ -17,6 +17,7 @@ export interface FolderPathSelectorProps {
   value: string;
   disabled: boolean;
   statusText: string;
+  errorText: string;
   onOpenChange: (open: boolean) => void;
   onValueChange: (value: string) => void;
   onApply: () => void;
@@ -27,6 +28,7 @@ export function FolderPathSelector({
   value,
   disabled,
   statusText,
+  errorText,
   onOpenChange,
   onValueChange,
   onApply,
@@ -97,6 +99,12 @@ export function FolderPathSelector({
             >
               {statusText}
             </Typography>
+          )}
+
+          {errorText && (
+            <Alert severity="error" sx={{ mt: 1 }}>
+              {errorText}
+            </Alert>
           )}
         </Box>
       </Collapse>

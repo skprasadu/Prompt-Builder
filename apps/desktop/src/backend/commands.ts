@@ -1,10 +1,13 @@
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 
 import { fetchApiTable, fetchApiTableFromUrl, extractApiUnits } from "./apiTable";
 import { extractHtmlBlocks, extractRegexBlocks } from "./blocks";
 import { inspectExcel, extractExcelUnits } from "./excel";
 import { scanDir } from "./fileTree";
 import { readAsciiFiles } from "./ascii";
+import { buildRagContext, createEntry, getEntryDetail, listEntries, searchEntries } from "./entryStore";
+import { askProjectMemory } from "./rag/ragService";
+import { getProjectState, saveProjectState } from "./projectStateStore";
 import { createLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
 import { loadSystemPrompt, saveSystemPrompt } from "./systemPrompt";
 
@@ -86,6 +89,72 @@ export function registerCommandHandlers(): void {
         case "project:get":
           return getLocalProject(requiredString(args, "projectId"));
 
+        case "project:get_state":
+          return getProjectState(requiredString(args, "projectId"));
+
+        case "project:save_state":
+          return saveProjectState({
+            projectId: requiredString(args, "projectId"),
+            state: requiredObject(args, "state"),
+          });
+
+        case "entry:create":
+          return createEntry({
+            projectId: requiredString(args, "projectId"),
+            name: requiredString(args, "name"),
+            description: optionalString(args, "description") ?? "",
+            notes: optionalString(args, "notes") ?? "",
+            aiOutput: optionalString(args, "aiOutput") ?? "",
+            systemPrompt: optionalString(args, "systemPrompt") ?? "",
+            promptText: optionalString(args, "promptText") ?? "",
+            selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
+            includeTree: optionalBoolean(args, "includeTree") ?? false,
+            includeGitChangedFiles: optionalBoolean(args, "includeGitChangedFiles") ?? false,
+            tokenCount: optionalNumber(args, "tokenCount") ?? 0,
+          });
+
+        case "entry:list":
+          return listEntries(requiredString(args, "projectId"));
+
+        case "entry:get":
+          return getEntryDetail({
+            projectId: requiredString(args, "projectId"),
+            entryId: requiredString(args, "entryId"),
+          });
+
+        case "entry:search": {
+          const limit = optionalNumber(args, "limit");
+
+          return searchEntries({
+            projectId: requiredString(args, "projectId"),
+            query: requiredString(args, "query"),
+            ...(limit !== undefined ? { limit } : {}),
+          });
+        }
+
+        case "rag:build_context": {
+          const limit = optionalNumber(args, "limit");
+
+          return buildRagContext({
+            projectId: requiredString(args, "projectId"),
+            query: requiredString(args, "query"),
+            ...(limit !== undefined ? { limit } : {}),
+          });
+        }
+
+        case "rag:ask": {
+          const limit = optionalNumber(args, "limit");
+
+          return askProjectMemory({
+            projectId: requiredString(args, "projectId"),
+            question: requiredString(args, "question"),
+            ...(limit !== undefined ? { limit } : {}),
+          });
+        }
+
+        case "shell:open_path":
+          return shell.openPath(requiredString(args, "path"));
+
         default:
           throw new Error(`Unknown desktop command: ${command}`);
       }
@@ -127,6 +196,20 @@ function requiredStringArray(args: CommandArgs, key: string): string[] {
   return value;
 }
 
+function optionalStringArray(args: CommandArgs, key: string): string[] | undefined {
+  const value = args[key];
+
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error(`Expected string[] argument: ${key}`);
+  }
+
+  return value;
+}
+
 function requiredObject<T extends object>(args: CommandArgs, key: string): T {
   const value = args[key];
 
@@ -146,6 +229,20 @@ function optionalNumber(args: CommandArgs, key: string): number | undefined {
 
   if (typeof value !== "number") {
     throw new Error(`Expected number argument: ${key}`);
+  }
+
+  return value;
+}
+
+function optionalBoolean(args: CommandArgs, key: string): boolean | undefined {
+  const value = args[key];
+
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected boolean argument: ${key}`);
   }
 
   return value;

@@ -35,3 +35,6 @@ apps/desktop/dist/
 # Workspace package build output
 apps/*/dist/
 packages/*/dist/
+
+# Local secrets
+.env.local

@@ -53,7 +53,7 @@ async function main() {
   }
 
   if (shouldRepairElectron) {
-    run("npm", ["run", "desktop:repair-electron"]);
+    run("npm", ["run", "desktop:prepare-native"]);
   }
 
   if (shouldBuild) {

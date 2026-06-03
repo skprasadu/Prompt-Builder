@@ -1,4 +1,4 @@
-electronVersion: 42.3.0
+electronVersion: 41.5.2
 appId: com.rapidprompt.workbench
 productName: Rapid Prompt Workbench
 
@@ -14,7 +14,9 @@ files:
   - "!**/*.map"
 
 asar: true
-npmRebuild: false
+asarUnpack:
+  - "**/*.node"
+npmRebuild: true
 
 mac:
   category: public.app-category.developer-tools

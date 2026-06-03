@@ -9,6 +9,7 @@ import {
 
 import type { Node, FileValue } from "../types/fs";
 import type { LocalProject } from "../types/project";
+import type { LocalProjectState, PromptWorkflowState } from "../types/capture";
 import { isDirNode } from "../types/fs";
 import { formatOutput, type OutputOptions } from "../lib/formatters";
 import { countTokens } from "../lib/tokenize";
@@ -19,15 +20,7 @@ import { FolderPathSelector } from "../components/FolderPathSelector";
 import { collectFilePaths } from "../lib/tree";
 import { resolveTreeSelectionFromPathInput } from "../lib/pathSelection";
 
-import type { SessionFileV4 } from "../types/session";
-import {
-  toSessionV4,
-  exportSession,
-  importSession,
-  resolveSelected,
-  resolveUnitSource,
-  toRelative,            // <-- add this
-} from "../lib/session";
+import { toAbsolute, toRelative } from "../lib/session";
 
 import type {
   PromptUnit,
@@ -36,7 +29,6 @@ import type {
   RegexConfig,
   HtmlConfig,
   Mode,
-  UnitConfig,
   ApiTable,
 } from "../types/units";
 
@@ -66,15 +58,11 @@ import {
   DialogActions,
 } from "@mui/material";
 
-import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import SaveAltIcon from "@mui/icons-material/SaveAlt";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import brandSvg from "../assets/brand.svg";
 
 function normalizeRootFromRust(raw: Node): Node {
   if (isDirNode(raw)) return { ...raw, children: raw.children ?? [] };
@@ -88,10 +76,14 @@ const FOLDER_PANEL_SPLITTER_WIDTH = 8;
 
 export interface PromptBuilderProps {
   project?: LocalProject | null;
+  onWorkspaceStateChange?: (state: PromptWorkflowState) => void;
 }
 
-export default function PromptBuilder({ project = null }: PromptBuilderProps): JSX.Element {
-  const [mode, setMode] = useState<Mode>("folder");
+export default function PromptBuilder({
+  project = null,
+  onWorkspaceStateChange,
+}: PromptBuilderProps): JSX.Element {
+  const [mode] = useState<Mode>("folder");
 
   const [rootPath, setRootPath] = useState<string>("");
   const [tree, setTree] = useState<Node | null>(null);
@@ -141,9 +133,12 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
   const [folderPathSelectorOpen, setFolderPathSelectorOpen] = useState<boolean>(false);
   const [folderPathInput, setFolderPathInput] = useState<string>("");
   const [folderPathSelectionStatus, setFolderPathSelectionStatus] = useState<string>("");
+  const [folderPathSelectionError, setFolderPathSelectionError] = useState<string>("");
 
   const debounceRef = useRef<number | null>(null);
   const systemPromptSaveRef = useRef<number | null>(null); // NEW
+  const projectStateSaveRef = useRef<number | null>(null);
+  const projectStateLoadedRef = useRef<boolean>(false);
   const [selectedDialogOpen, setSelectedDialogOpen] = useState<boolean>(false);
 
   useEffect(() => {
@@ -193,9 +188,111 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
       return;
     }
 
-    setRootPath(project.rootPath);
-    void loadTree(project.rootPath, false);
+    projectStateLoadedRef.current = false;
+
+    void (async () => {
+      try {
+        const savedState = await invoke<LocalProjectState>("project:get_state", {
+          projectId: project.id,
+        });
+
+        setText(savedState.promptText ?? "");
+        setIncludeTree(savedState.includeTree ?? false);
+        setFolderPanelWidth(
+          Math.min(
+            FOLDER_PANEL_MAX_WIDTH,
+            Math.max(FOLDER_PANEL_MIN_WIDTH, savedState.folderPanelWidth ?? FOLDER_PANEL_DEFAULT_WIDTH),
+          ),
+        );
+
+        setRootPath(project.rootPath);
+        const loadedTree = await loadTree(project.rootPath, false);
+
+        if (loadedTree) {
+          const reachable = collectFilePaths(loadedTree);
+          const restoredSelected = (savedState.selectedPaths ?? [])
+            .map((relativePath) => toAbsolute(project.rootPath, relativePath))
+            .filter((absolutePath) => reachable.has(absolutePath));
+
+          setSelected(new Set(restoredSelected));
+
+          setExpanded((prev) => {
+            const next = new Set(prev);
+            next.add(loadedTree.path);
+            (savedState.expandedPaths ?? [])
+              .map((relativePath) => toAbsolute(project.rootPath, relativePath))
+              .forEach((absolutePath) => next.add(absolutePath));
+            return next;
+          });
+        }
+      } catch (err: unknown) {
+        console.warn("project:get_state failed:", err);
+        setRootPath(project.rootPath);
+        void loadTree(project.rootPath, false);
+      } finally {
+        projectStateLoadedRef.current = true;
+      }
+    })();
   }, [project?.id, project?.rootPath]);
+
+  useEffect(() => {
+    if (!project?.id || !projectStateLoadedRef.current || !rootPath) {
+      return;
+    }
+
+    if (projectStateSaveRef.current) {
+      window.clearTimeout(projectStateSaveRef.current);
+    }
+
+    projectStateSaveRef.current = window.setTimeout(() => {
+      void invoke("project:save_state", {
+        projectId: project.id,
+        state: {
+          promptText: text,
+          includeTree,
+          selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
+          expandedPaths: Array.from(expanded).map((absolutePath) => toRelative(rootPath, absolutePath)),
+          folderPanelWidth,
+        },
+      }).catch((err: unknown) => {
+        console.warn("project:save_state failed:", err);
+      });
+    }, 500);
+
+    return () => {
+      if (projectStateSaveRef.current) {
+        window.clearTimeout(projectStateSaveRef.current);
+      }
+    };
+  }, [expanded, folderPanelWidth, includeTree, project?.id, rootPath, selected, text]);
+
+  useEffect(() => {
+    if (!project?.id) {
+      return;
+    }
+
+    onWorkspaceStateChange?.({
+      projectId: project.id,
+      rootPath,
+      systemPrompt,
+      promptText: text,
+      selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
+      includeTree,
+      tokenCount,
+      folderPanelWidth,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [
+    folderPanelWidth,
+    includeTree,
+    onWorkspaceStateChange,
+    project?.id,
+    rootPath,
+    selected,
+    systemPrompt,
+    text,
+    tokenCount,
+  ]);
 
   // Auto-expand ancestor directories so selected files are visible in the tree.
   useEffect(() => {
@@ -215,19 +312,6 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
   }, [tree, selected]);
 
   /* ---------------- Folder: pick folder, load tree ---------------- */
-
-  async function chooseFolder(): Promise<void> {
-    setError(null);
-    try {
-      const path = await open({ directory: true, multiple: false });
-      if (typeof path === "string" && path.length > 0) {
-        setRootPath(path);
-        await loadTree(path, /*preserveSelected*/ false);
-      }
-    } catch (e: unknown) {
-      setError(toErrorMessage(e));
-    }
-  }
 
   async function loadTree(path: string, preserveSelected: boolean): Promise<Node | null> {
     setError(null);
@@ -334,16 +418,27 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
     if (folderPathSelectionStatus) {
       setFolderPathSelectionStatus("");
     }
+    if (folderPathSelectionError) {
+      setFolderPathSelectionError("");
+    }
   }
 
+  /* ---------------- Excel mode ---------------- */
+
   function applyFolderPathSelection(): void {
+    setFolderPathSelectionError("");
+
     if (!rootPath) {
-      setError("Choose a folder before applying path selections.");
+      setFolderPathSelectionStatus("");
+      setFolderPathSelectionError("Project folder is not available.");
+      setError(null);
       return;
     }
 
     if (!tree) {
-      setError("The folder tree is not loaded. Choose a folder or refresh the tree before applying path selections.");
+      setFolderPathSelectionStatus("");
+      setFolderPathSelectionError("The folder tree is not loaded. Refresh the project tree before applying path selections.");
+      setError(null);
       return;
     }
 
@@ -355,13 +450,15 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
 
     if (result.inputCount === 0) {
       setFolderPathSelectionStatus("");
-      setError("Paste at least one file or folder path before applying.");
+      setFolderPathSelectionError("Paste at least one file or folder path before applying.");
+      setError(null);
       return;
     }
 
     if (result.matchedInputs.length === 0) {
       setFolderPathSelectionStatus("No matching paths found.");
-      setError(formatUnmatchedPathMessage(result.unmatchedInputs));
+      setFolderPathSelectionError(formatUnmatchedPathMessage(result.unmatchedInputs));
+      setError(null);
       return;
     }
 
@@ -383,16 +480,18 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
     setFolderPathSelectionStatus(`Selected ${selectedLabel} from ${matchedLabel}.`);
 
     if (result.unmatchedInputs.length > 0) {
-      setError(formatUnmatchedPathMessage(result.unmatchedInputs));
+      setFolderPathSelectionError(formatUnmatchedPathMessage(result.unmatchedInputs));
     } else {
-      setError(null);
+      setFolderPathSelectionError("");
     }
+
+    setError(null);
   }
 
   function formatUnmatchedPathMessage(paths: string[]): string {
     const shown = paths.slice(0, 5).join("; ");
     const suffix = paths.length > 5 ? `; +${paths.length - 5} more` : "";
-    return `Paths not found in the loaded folder tree: ${shown}${suffix}. Add the missing file/folder under the chosen folder or correct the path.`;
+    return `Paths not found in the loaded folder tree: ${shown}${suffix}. Add the missing file/folder under the project folder or correct the path.`;
   }
   /* ---------------- Excel mode ---------------- */
 
@@ -664,197 +763,6 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
     }
   }
 
-  /* ---------------- Save / Load session (v4) ---------------- */
-
-  async function saveSession(): Promise<void> {
-    if (!rootPath) {
-      setError("Choose a folder before saving a session.");
-      return;
-    }
-
-    let unitConfig: UnitConfig | undefined;
-    if (mode === "excel") {
-      unitConfig = {
-        kind: "excel",
-        sheet: excelSheet,
-        idColumn: excelIdCol,
-        descriptionColumns: excelDescCols,
-      };
-    } else if (mode === "block") {
-      if (blockKind === "regex") {
-        unitConfig = {
-          kind: "regex",
-          delimiter: regexDelimiter,
-          ...(regexIdCapture ? { idCapture: regexIdCapture } : {}),
-          ...(regexFlags ? { flags: regexFlags } : {}),
-        };
-      } else if (blockKind === "html") {
-        unitConfig = {
-          kind: "html",
-          itemSelector: htmlItemSel,
-          ...(htmlIdSel ? { idSelector: htmlIdSel } : {}),
-          ...(htmlIdAttr ? { idAttr: htmlIdAttr } : {}),
-          ...(htmlDescSel ? { descSelector: htmlDescSel } : {}),
-        };
-      } else {
-        // API: endpoint required; id/desc are optional until chosen
-        unitConfig = {
-          kind: "api",
-          endpoint: apiEndpoint,
-          ...(apiKeyColumn ? { idColumn: apiKeyColumn } : {}),
-          ...(apiDescColumns.length ? { descriptionColumns: apiDescColumns } : {}),
-        };
-      }
-    }
-
-    const currentId = units[unitIndex]?.id;
-    const s: SessionFileV4 = toSessionV4({
-      rootPath,
-      textarea: text,
-      selectedAbsolute: Array.from(selected),
-      includeTree: includeTree,
-      mode,
-      ...(unitSource ? { unitSourceAbs: unitSource } : {}),
-      ...(unitConfig ? { unitConfig } : {}),
-      ...(mode === "folder"
-        ? {}
-        : { cursor: { index: unitIndex, ...(currentId ? { id: currentId } : {}) } }),
-      savedTokenCount: tokenCount,
-    });
-
-    try {
-      await exportSession(s);
-    } catch (e: unknown) {
-      setError(toErrorMessage(e));
-    }
-  }
-
-  async function loadSession(): Promise<void> {
-    try {
-      const s = await importSession();
-      if (!s) return;
-
-      setText(s.textarea);
-      setMode(s.mode);
-      setIncludeTree(!!s.includeTree);
-      setRootPath(s.rootPath);
-
-      const loadedTree = await loadTree(s.rootPath, /*preserveSelected*/ false);
-
-      // Folder selections
-      const absSel = resolveSelected(s.rootPath, s.selected); // -> absolute
-      if (loadedTree) {
-        const reachable = collectFilePaths(loadedTree);
-        const actualSel = absSel.filter((p) => reachable.has(p));
-        setSelected(new Set(actualSel));
-
-        // Expand ancestors so they’re visible immediately.
-        const mustOpen = dirsToExpandForSelected(loadedTree, new Set(actualSel));
-        setExpanded((prev) => {
-          const next = new Set(prev);
-          for (const d of mustOpen) next.add(d);
-          next.add(loadedTree.path); // ensure root is open
-          return next;
-        });
-      } else {
-        setSelected(new Set(absSel));
-      }
-
-      // Unit source & config
-      const srcAbs = resolveUnitSource(s.rootPath, s.unitSource);
-      setUnitSource(srcAbs ?? "");
-
-      if (s.mode === "excel" && s.unitSource && srcAbs && s.unitConfig?.kind === "excel") {
-        const insp = await invoke<ExcelInspector>("inspect_excel", { path: srcAbs });
-        setExcelInspect(insp);
-        setExcelSheet(s.unitConfig.sheet);
-        setExcelIdCol(s.unitConfig.idColumn);
-        setExcelDescCols(s.unitConfig.descriptionColumns);
-        const u = await invoke<PromptUnit[]>("extract_excel_units", {
-          path: srcAbs,
-          config: s.unitConfig,
-        });
-        setUnits(u);
-        const idx = Math.max(0, Math.min(u.length - 1, s.cursor?.index ?? 0));
-        setUnitIndex(idx);
-      } else if (s.mode === "block" && s.unitSource && srcAbs && s.unitConfig) {
-        if (s.unitConfig.kind === "regex") {
-          setBlockKind("regex");
-          setRegexDelimiter(s.unitConfig.delimiter);
-          setRegexIdCapture(s.unitConfig.idCapture ?? "");
-          setRegexFlags(s.unitConfig.flags ?? "m");
-          const u = await invoke<PromptUnit[]>("extract_regex_blocks", {
-            path: srcAbs,
-            config: s.unitConfig,
-          });
-          setUnits(u);
-          const idx = Math.max(0, Math.min(u.length - 1, s.cursor?.index ?? 0));
-          setUnitIndex(idx);
-        } else if (s.unitConfig.kind === "html") {
-          setBlockKind("html");
-          setHtmlItemSel(s.unitConfig.itemSelector);
-          setHtmlIdSel(s.unitConfig.idSelector ?? "");
-          setHtmlIdAttr(s.unitConfig.idAttr ?? "id");
-          setHtmlDescSel(s.unitConfig.descSelector ?? "");
-          const u = await invoke<PromptUnit[]>("extract_html_blocks", {
-            path: srcAbs,
-            config: s.unitConfig,
-          });
-          setUnits(u);
-          const idx = Math.max(0, Math.min(u.length - 1, s.cursor?.index ?? 0));
-          setUnitIndex(idx);
-        } else if (s.unitConfig.kind === "api") {
-          setBlockKind("api");
-          const apiCfg = s.unitConfig;
-          setApiEndpoint(apiCfg.endpoint ?? "");
-
-          try {
-            const table = await invoke<ApiTable>("fetch_api_table", {
-              endpoint: apiCfg.endpoint ?? "",
-              path: srcAbs,
-            });
-            setApiColumns(table.columns);
-            setApiRows(table.rows);
-
-            if (apiCfg.idColumn) setApiKeyColumn(apiCfg.idColumn);
-            if (apiCfg.descriptionColumns) setApiDescColumns(apiCfg.descriptionColumns);
-
-            // Auto-build units if both key & description were previously chosen
-            if (apiCfg.idColumn && (apiCfg.descriptionColumns?.length ?? 0) > 0) {
-              const built: PromptUnit[] = table.rows
-                .map((r, i) => ({
-                  id: r[apiCfg.idColumn!] ?? String(i + 1),
-                  body: apiCfg.descriptionColumns!
-                    .map((c: string) => r[c])
-                    .filter(Boolean)
-                    .join("\n"),
-                }))
-                .filter((u) => u.body.length > 0);
-              setUnits(built);
-              const idx = Math.max(0, Math.min(built.length - 1, s.cursor?.index ?? 0));
-              setUnitIndex(idx);
-            } else {
-              setUnits([]);
-              setUnitIndex(0);
-            }
-          } catch (e: unknown) {
-            setError(toErrorMessage(e));
-          }
-        } else {
-          // Defensive: unexpected kind while in "block" mode
-          setUnits([]);
-          setUnitIndex(0);
-        }
-      } else {
-        // non-unit mode
-        setUnits([]);
-        setUnitIndex(0);
-      }
-    } catch (e: unknown) {
-      setError(toErrorMessage(e));
-    }
-  }
-
   // Expand helpers
   function findAncestorDirsInTree(
     node: Node,
@@ -942,6 +850,8 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
     <Box
       sx={{
         display: "grid",
+        height: "100%",
+        minHeight: 0,
         gridTemplateColumns: {
           xs: "1fr",
           sm:
@@ -977,40 +887,34 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
           spacing={1}
           sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}
         >
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<FolderOpenIcon />}
-            onClick={() => void chooseFolder()}
-            disabled={busy}
+          <Typography
+            variant="caption"
+            noWrap
+            title={rootPath}
+            sx={{ color: "text.secondary", flex: 1 }}
           >
-            Choose folder
-          </Button>
-          <Button
-            size="small"
-            variant="text"
-            startIcon={<RefreshIcon />}
-            onClick={() => void loadTree(rootPath, true)}
-            disabled={busy || !rootPath}
-          >
-            Refresh
-          </Button>
-          {rootPath && (
-            <Typography
-              variant="caption"
-              noWrap
-              title={rootPath}
-              sx={{ color: "text.secondary", flex: 1 }}
-            >
-              {rootPath}
-            </Typography>
-          )}
+            {rootPath || "Project folder"}
+          </Typography>
+
+          <Tooltip title="Refresh project tree" arrow>
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Refresh project tree"
+                onClick={() => void loadTree(rootPath, true)}
+                disabled={busy || !rootPath}
+              >
+                <RefreshIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
         </Stack>
         <FolderPathSelector
           open={folderPathSelectorOpen}
           value={folderPathInput}
           disabled={busy || !rootPath || !tree}
           statusText={folderPathSelectionStatus}
+          errorText={folderPathSelectionError}
           onOpenChange={setFolderPathSelectorOpen}
           onValueChange={updateFolderPathInput}
           onApply={applyFolderPathSelection}
@@ -1054,15 +958,16 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
         sx={{
           p: 2,
           display: "grid",
-          // folder actions + system prompt + header row + main textarea + mode panel + footer
+          // folder actions + system prompt + main textarea + mode panel + footer
           gridTemplateRows:
             mode === "folder"
-              ? "auto auto auto minmax(0,1fr) auto auto"
-              : "auto auto minmax(0,1fr) auto auto",
+              ? "auto auto minmax(0,1fr) auto auto"
+              : "auto minmax(0,1fr) auto auto auto",
           gap: 1.25,
           minWidth: 0,
           minHeight: 0,
-          overflow: "hidden",
+          overflowX: "hidden",
+          overflowY: "auto",
         }}
       >
 
@@ -1169,33 +1074,6 @@ export default function PromptBuilder({ project = null }: PromptBuilderProps): J
             }}
           />
         </Box>
-
-        {/* Header row */}
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography variant="h5" sx={{ flex: 1 }}>
-            Rapid Prompt - Workbench
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<UploadFileIcon />}
-            onClick={() => void loadSession()}
-          >
-            Load
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<SaveAltIcon />}
-            onClick={() => void saveSession()}
-            disabled={!rootPath}
-          >
-            Save
-          </Button>
-          <Box sx={{ ml: 1, display: { xs: "none", sm: "inline-flex" }, alignItems: "center" }}>
-            <img src={brandSvg} alt="Brand" height={36} style={{ opacity: 0.9 }} />
-          </Box>
-        </Stack>
 
         {/* User prompt textarea */}
         <Box sx={{ minHeight: 0, overflow: "auto" }}>

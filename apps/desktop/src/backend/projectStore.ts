@@ -28,7 +28,7 @@ export function globalSystemPromptPath(): string {
   return path.join(rapidPromptHome(), SYSTEM_PROMPT_FILE);
 }
 
-function projectDir(projectId: string): string {
+export function projectDir(projectId: string): string {
   return path.join(rapidPromptHome(), PROJECTS_DIR, projectId);
 }
 

@@ -37,3 +37,5 @@ export interface ApiAcceptedResponse {
   status: "accepted";
   id?: string;
 }
+export * from "./entries.js";
+export * from "./search.js";

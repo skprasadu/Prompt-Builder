@@ -4,15 +4,15 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "desktop:dev": "npm run desktop:repair-electron && npm --workspace @rapid-prompt/desktop run dev",
+    "desktop:dev": "npm run desktop:prepare-native && npm --workspace @rapid-prompt/desktop run dev",
     "desktop:build": "npm --workspace @rapid-prompt/desktop run build",
     "desktop:preview": "npm --workspace @rapid-prompt/desktop run preview",
     "api:dev": "npm --workspace @rapid-prompt/prompt-sync-api run dev",
     "api:build": "npm --workspace @rapid-prompt/prompt-sync-api run build",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "desktop:repair-electron": "node tools/repair-electron-install.mjs",
-    "desktop:package:mac": "npm --workspace @rapid-prompt/desktop run package:mac",
-    "desktop:package:mac:dir": "npm --workspace @rapid-prompt/desktop run package:mac:dir",
+    "desktop:package:mac": "npm run desktop:prepare-native && npm --workspace @rapid-prompt/desktop run package:mac",
+    "desktop:package:mac:dir": "npm run desktop:prepare-native && npm --workspace @rapid-prompt/desktop run package:mac:dir",
     "clean": "node tools/clean-rebuild.mjs",
     "rebuild:fresh": "node tools/clean-rebuild.mjs --install --repair-electron --build",
     "rebuild:fresh:mac": "node tools/clean-rebuild.mjs --install --repair-electron --package-mac",
@@ -20,16 +20,19 @@
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
     "knip": "knip",
-    "check": "npm run typecheck && npm run lint && npm run knip"
+    "check": "npm run typecheck && npm run lint && npm run knip",
+    "desktop:rebuild-native": "electron-rebuild -f -w better-sqlite3 -v 41.5.2",
+    "desktop:prepare-native": "npm run desktop:repair-electron && npm run desktop:rebuild-native"
   },
   "devDependencies": {
-    "electron": "42.3.0",
+    "electron": "41.5.2",
     "@eslint/js": "10.0.1",
     "eslint": "10.4.1",
     "globals": "^16.5.0",
     "knip": "^6.15.0",
     "typescript": "~5.8.3",
-    "typescript-eslint": "8.60.0"
+    "typescript-eslint": "8.60.0",
+    "@electron/rebuild": "4.0.4"
   },
   "workspaces": [
     "apps/*",
