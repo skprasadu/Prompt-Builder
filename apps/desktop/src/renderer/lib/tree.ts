@@ -2,9 +2,9 @@ import type { Node } from "../types/fs";
 import { isDirNode } from "../types/fs";
 
 /** ===== Public constants (change here, not in the UI) ===== */
-export const FILE_TREE_DEPTH_LIMIT = 4;
-export const FILE_TREE_ENTRY_LIMIT = 1500;
-export const FILE_TREE_SHOW_ROOT_PATH = true;
+const FILE_TREE_DEPTH_LIMIT = 4;
+const FILE_TREE_ENTRY_LIMIT = 1500;
+const FILE_TREE_SHOW_ROOT_PATH = true;
 
 /** Collect *file* paths (used for preserving selections). */
 export function collectFilePaths(root: Node): Set<string> {
@@ -47,7 +47,7 @@ export function toAsciiTree(root: Node, opts: Partial<AsciiTreeOptions> = {}): s
         lines.push(prefix + "… (+ more)");
         return;
       }
-      const child: any = children[i];
+      const child = children[i];
       const isLast = i === lastIdx;
       const branch = isLast ? "└── " : "├── ";
       const nextPrefix = prefix + (isLast ? "    " : "│   ");

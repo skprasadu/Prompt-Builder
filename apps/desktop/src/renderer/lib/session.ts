@@ -23,7 +23,7 @@ export function toRelative(root: string, absolute: string): string {
   return absFix.startsWith(rootFix) ? absFix.slice(rootFix.length) : absolute;
 }
 
-export function toAbsolute(root: string, relative: string): string {
+function toAbsolute(root: string, relative: string): string {
   const sep = pathSepFor(root);
   const relNorm = relative.split(/[\\/]+/).join(sep);
   return (root.endsWith(sep) ? root : root + sep) + relNorm;
@@ -71,9 +71,9 @@ export function toSessionV4(args: {
 
 /* ---------- validation ---------- */
 
-export function validateSession(x: unknown): x is SessionFileV4 {
+function validateSession(x: unknown): x is SessionFileV4 {
   const s = x as Partial<SessionFileV4>;
-  if (!s || s.version !== 4) return false;
+  if (s?.version !== 4) return false;
   if (typeof s.rootPath !== "string") return false;
   if (typeof s.textarea !== "string") return false;
   if (!Array.isArray(s.selected) || !s.selected.every((v) => typeof v === "string")) return false;
@@ -114,14 +114,14 @@ export async function importSession(): Promise<SessionFileV4 | null> {
 
 /* ---------- helpers used by app ---------- */
 
-export async function resolveUnitSource(
+export function resolveUnitSource(
   root: string,
   unitSource?: string
-): Promise<string | undefined> {
+): string | undefined {
   if (!unitSource) return undefined;
   return toAbsolute(root, unitSource);
 }
 
-export async function resolveSelected(root: string, rels: string[]): Promise<string[]> {
+export function resolveSelected(root: string, rels: string[]): string[] {
   return rels.map((r: string) => toAbsolute(root, r));
 }

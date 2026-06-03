@@ -19,7 +19,7 @@ interface SaveDialogOptions {
 
 export function registerDesktopIpcHandlers(): void {
   ipcMain.handle("rapid-prompt:dialog-open", async (_event, options: OpenDialogOptions) => {
-    const properties: Array<"openFile" | "openDirectory" | "multiSelections"> = [
+    const properties: ("openFile" | "openDirectory" | "multiSelections")[] = [
       options?.directory ? "openDirectory" : "openFile",
     ];
 
@@ -29,7 +29,7 @@ export function registerDesktopIpcHandlers(): void {
 
     const result = await dialog.showOpenDialog({
       properties,
-      filters: options?.filters,
+      ...(options?.filters ? { filters: options.filters } : {}),
     });
 
     if (result.canceled) {
@@ -41,8 +41,8 @@ export function registerDesktopIpcHandlers(): void {
 
   ipcMain.handle("rapid-prompt:dialog-save", async (_event, options: SaveDialogOptions) => {
     const result = await dialog.showSaveDialog({
-      defaultPath: options?.defaultPath,
-      filters: options?.filters,
+      ...(options?.defaultPath ? { defaultPath: options.defaultPath } : {}),
+      ...(options?.filters ? { filters: options.filters } : {}),
     });
 
     if (result.canceled) {

@@ -16,10 +16,20 @@
     "clean": "node tools/clean-rebuild.mjs",
     "rebuild:fresh": "node tools/clean-rebuild.mjs --install --repair-electron --build",
     "rebuild:fresh:mac": "node tools/clean-rebuild.mjs --install --repair-electron --package-mac",
-    "rebuild:fresh:keep-lock": "node tools/clean-rebuild.mjs --keep-lockfiles --install --repair-electron --build"
+    "rebuild:fresh:keep-lock": "node tools/clean-rebuild.mjs --keep-lockfiles --install --repair-electron --build",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "knip": "knip",
+    "check": "npm run typecheck && npm run lint && npm run knip"
   },
   "devDependencies": {
-    "electron": "42.3.0"
+    "electron": "42.3.0",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.4.1",
+    "globals": "^16.5.0",
+    "knip": "^6.15.0",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "8.60.0"
   },
   "workspaces": [
     "apps/*",

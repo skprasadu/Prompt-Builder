@@ -14,5 +14,3 @@ export interface SessionFileV4 {
   cursor?: { id?: string; index?: number; } | undefined;
   savedTokenCount?: number | undefined;
 }
-
-export type AnySession = SessionFileV4;

@@ -36,7 +36,7 @@ function getDirSelectionState(
   const stack: Node[] = [...node.children];
 
   while (stack.length > 0) {
-    const current = stack.pop() as Node;
+    const current = stack.pop()!;
     if (isDirNode(current)) {
       stack.push(...current.children);
     } else {

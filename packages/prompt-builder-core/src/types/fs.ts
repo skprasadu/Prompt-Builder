@@ -1,16 +1,16 @@
-export type DirNode = {
+export interface DirNode {
   name: string;
   path: string;
   isDir: true;
   children: Node[]; // directories always carry children
-};
+}
 
-export type FileLeaf = {
+export interface FileLeaf {
   name: string;
   path: string;
   isDir: false;
   // no children
-};
+}
 
 export type Node = DirNode | FileLeaf;
 

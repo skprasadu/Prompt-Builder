@@ -5,7 +5,7 @@ const server = Fastify({
   logger: true,
 });
 
-server.get("/healthz", async () => {
+server.get("/healthz", () => {
   return {
     ok: true,
     service: "prompt-sync-api",

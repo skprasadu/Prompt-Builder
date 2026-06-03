@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import type { ExcelConfig, ExcelInspector, PromptUnit } from "./types";
 
-export async function inspectExcel(filePath: string): Promise<ExcelInspector> {
+export function inspectExcel(filePath: string): ExcelInspector {
   const workbook = XLSX.readFile(filePath);
 
   return {
@@ -18,7 +18,7 @@ export async function inspectExcel(filePath: string): Promise<ExcelInspector> {
   };
 }
 
-export async function extractExcelUnits(filePath: string, config: ExcelConfig): Promise<PromptUnit[]> {
+export function extractExcelUnits(filePath: string, config: ExcelConfig): PromptUnit[] {
   const workbook = XLSX.readFile(filePath);
   const rows = sheetRows(workbook, config.sheet);
   const headerResult = findHeaderRowWithIndex(rows);
@@ -117,5 +117,22 @@ function cellString(value: unknown): string {
     return "";
   }
 
-  return String(value);
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized ?? "";
+  } catch {
+    return "";
+  }
 }

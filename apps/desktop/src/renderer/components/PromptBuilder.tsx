@@ -1,5 +1,5 @@
 // src/App.tsx
-import { JSX, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import {
   getDesktopWindow as getCurrentWindow,
   invoke,
@@ -8,6 +8,7 @@ import {
 } from "../lib/desktop";
 
 import type { Node, FileValue } from "../types/fs";
+import type { LocalProject } from "../types/project";
 import { isDirNode } from "../types/fs";
 import { formatOutput, type OutputOptions } from "../lib/formatters";
 import { countTokens } from "../lib/tokenize";
@@ -37,7 +38,6 @@ import type {
   Mode,
   UnitConfig,
   ApiTable,
-  ApiConfig, // <-- used for safe narrowing
 } from "../types/units";
 
 // MUI
@@ -86,7 +86,11 @@ const FOLDER_PANEL_MIN_WIDTH = 280;
 const FOLDER_PANEL_MAX_WIDTH = 640;
 const FOLDER_PANEL_SPLITTER_WIDTH = 8;
 
-export default function PromptBuilder(): JSX.Element {
+export interface PromptBuilderProps {
+  project?: LocalProject | null;
+}
+
+export default function PromptBuilder({ project = null }: PromptBuilderProps): JSX.Element {
   const [mode, setMode] = useState<Mode>("folder");
 
   const [rootPath, setRootPath] = useState<string>("");
@@ -143,30 +147,36 @@ export default function PromptBuilder(): JSX.Element {
   const [selectedDialogOpen, setSelectedDialogOpen] = useState<boolean>(false);
 
   useEffect(() => {
-    getCurrentWindow().setTitle("Rapid Prompt - Workbench").catch(() => { });
+    void getCurrentWindow().setTitle("Rapid Prompt - Workbench").catch((err: unknown) => {
+      console.warn("setTitle failed:", err);
+    });
   }, []);
 
   // Load persisted System Prompt from backend (if any)
   useEffect(() => {
-    (async () => {
+    void (async () => {
       try {
-        const saved = await invoke<string>("load_system_prompt");
-        if (typeof saved === "string") {
-          setSystemPrompt(saved);
-        }
-      } catch (e) {
+        const saved = await invoke<string>("load_system_prompt", {
+          ...(project?.id ? { projectId: project.id } : {}),
+        });
+        setSystemPrompt(typeof saved === "string" ? saved : "");
+      } catch (e: unknown) {
         console.warn("load_system_prompt failed:", e);
       }
     })();
-  }, []);
+  }, [project?.id]);
 
   // Persist System Prompt whenever it changes (debounced)
   useEffect(() => {
     if (systemPromptSaveRef.current) {
       window.clearTimeout(systemPromptSaveRef.current);
     }
+
     systemPromptSaveRef.current = window.setTimeout(() => {
-      invoke("save_system_prompt", { value: systemPrompt }).catch((e) => {
+      void invoke("save_system_prompt", {
+        value: systemPrompt,
+        ...(project?.id ? { projectId: project.id } : {}),
+      }).catch((e: unknown) => {
         console.warn("save_system_prompt failed:", e);
       });
     }, 400);
@@ -176,7 +186,16 @@ export default function PromptBuilder(): JSX.Element {
         window.clearTimeout(systemPromptSaveRef.current);
       }
     };
-  }, [systemPrompt]);
+  }, [project?.id, systemPrompt]);
+
+  useEffect(() => {
+    if (!project?.rootPath) {
+      return;
+    }
+
+    setRootPath(project.rootPath);
+    void loadTree(project.rootPath, false);
+  }, [project?.id, project?.rootPath]);
 
   // Auto-expand ancestor directories so selected files are visible in the tree.
   useEffect(() => {
@@ -245,7 +264,11 @@ export default function PromptBuilder(): JSX.Element {
   function toggleDir(path: string): void {
     setExpanded((prev) => {
       const next = new Set(prev);
-      next.has(path) ? next.delete(path) : next.add(path);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
       return next;
     });
   }
@@ -519,7 +542,7 @@ export default function PromptBuilder(): JSX.Element {
       });
       setApiColumns(table.columns);
       setApiRows(table.rows);
-      setApiKeyColumn(table.columns[0] || "");
+      setApiKeyColumn(table.columns[0] ?? "");
       setApiDescColumns(table.columns.slice(1, 2)); // sensible default
       setUnits([]); // clear units until we map columns
       setUnitIndex(0);
@@ -609,7 +632,6 @@ export default function PromptBuilder(): JSX.Element {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, text, systemPrompt, selected, includeTree, units, unitIndex, tree]);
 
   async function copyPrompt(): Promise<void> {
@@ -681,7 +703,7 @@ export default function PromptBuilder(): JSX.Element {
           endpoint: apiEndpoint,
           ...(apiKeyColumn ? { idColumn: apiKeyColumn } : {}),
           ...(apiDescColumns.length ? { descriptionColumns: apiDescColumns } : {}),
-        } as ApiConfig;
+        };
       }
     }
 
@@ -720,7 +742,7 @@ export default function PromptBuilder(): JSX.Element {
       const loadedTree = await loadTree(s.rootPath, /*preserveSelected*/ false);
 
       // Folder selections
-      const absSel = await resolveSelected(s.rootPath, s.selected); // -> absolute
+      const absSel = resolveSelected(s.rootPath, s.selected); // -> absolute
       if (loadedTree) {
         const reachable = collectFilePaths(loadedTree);
         const actualSel = absSel.filter((p) => reachable.has(p));
@@ -739,10 +761,10 @@ export default function PromptBuilder(): JSX.Element {
       }
 
       // Unit source & config
-      const srcAbs = await resolveUnitSource(s.rootPath, s.unitSource);
-      setUnitSource(srcAbs || "");
+      const srcAbs = resolveUnitSource(s.rootPath, s.unitSource);
+      setUnitSource(srcAbs ?? "");
 
-      if (s.mode === "excel" && s.unitSource && srcAbs && s.unitConfig && s.unitConfig.kind === "excel") {
+      if (s.mode === "excel" && s.unitSource && srcAbs && s.unitConfig?.kind === "excel") {
         const insp = await invoke<ExcelInspector>("inspect_excel", { path: srcAbs });
         setExcelInspect(insp);
         setExcelSheet(s.unitConfig.sheet);
@@ -759,8 +781,8 @@ export default function PromptBuilder(): JSX.Element {
         if (s.unitConfig.kind === "regex") {
           setBlockKind("regex");
           setRegexDelimiter(s.unitConfig.delimiter);
-          setRegexIdCapture(s.unitConfig.idCapture || "");
-          setRegexFlags(s.unitConfig.flags || "m");
+          setRegexIdCapture(s.unitConfig.idCapture ?? "");
+          setRegexFlags(s.unitConfig.flags ?? "m");
           const u = await invoke<PromptUnit[]>("extract_regex_blocks", {
             path: srcAbs,
             config: s.unitConfig,
@@ -771,9 +793,9 @@ export default function PromptBuilder(): JSX.Element {
         } else if (s.unitConfig.kind === "html") {
           setBlockKind("html");
           setHtmlItemSel(s.unitConfig.itemSelector);
-          setHtmlIdSel(s.unitConfig.idSelector || "");
-          setHtmlIdAttr(s.unitConfig.idAttr || "id");
-          setHtmlDescSel(s.unitConfig.descSelector || "");
+          setHtmlIdSel(s.unitConfig.idSelector ?? "");
+          setHtmlIdAttr(s.unitConfig.idAttr ?? "id");
+          setHtmlDescSel(s.unitConfig.descSelector ?? "");
           const u = await invoke<PromptUnit[]>("extract_html_blocks", {
             path: srcAbs,
             config: s.unitConfig,
@@ -783,7 +805,7 @@ export default function PromptBuilder(): JSX.Element {
           setUnitIndex(idx);
         } else if (s.unitConfig.kind === "api") {
           setBlockKind("api");
-          const apiCfg = s.unitConfig as ApiConfig;
+          const apiCfg = s.unitConfig;
           setApiEndpoint(apiCfg.endpoint ?? "");
 
           try {
@@ -801,7 +823,7 @@ export default function PromptBuilder(): JSX.Element {
             if (apiCfg.idColumn && (apiCfg.descriptionColumns?.length ?? 0) > 0) {
               const built: PromptUnit[] = table.rows
                 .map((r, i) => ({
-                  id: r[apiCfg.idColumn!] || String(i + 1),
+                  id: r[apiCfg.idColumn!] ?? String(i + 1),
                   body: apiCfg.descriptionColumns!
                     .map((c: string) => r[c])
                     .filter(Boolean)
@@ -860,20 +882,6 @@ export default function PromptBuilder(): JSX.Element {
 
   // --- add near the other helpers inside App() (top-level of the component) ---
 
-  /** Turn "raw values joined by newline" into a labeled Markdown list using column names. */
-  function labeledBodyFromColumns(rawBody: string, colNames: string[]): string {
-    // split unit.body by lines (the extractor joins selected columns with '\n')
-    const vals = rawBody.split(/\r?\n/);
-
-    // Map column names to values; collapse any accidental newlines inside a value
-    const lines = colNames.map((name, i) => {
-      const v = (vals[i] ?? "").replace(/\r?\n/g, " ").trim();
-      if (!v) return null;
-      return `- **${name}:** ${v}`;
-    }).filter((x): x is string => Boolean(x));
-
-    return lines.join("\n");
-  }
 
   // Split `text` into exactly `parts` chunks by using the first (parts-1)
   // newline separators as hard boundaries. The remainder (with all its newlines)
@@ -1228,11 +1236,11 @@ export default function PromptBuilder(): JSX.Element {
                       label="Sheet"
                       value={excelSheet}
                       onChange={(e) => {
-                        const next = e.target.value as string;
+                        const next = e.target.value;
                         setExcelSheet(next);
                         const info = excelInspect.sheets.find((s) => s.name === next);
                         if (info) {
-                          const idCol = info.columns[0] || "";
+                          const idCol = info.columns[0] ?? "";
                           setExcelIdCol(idCol);
                           setExcelDescCols(info.columns.filter((c: string) => c !== idCol).slice(0, 1));
                         }
@@ -1262,7 +1270,7 @@ export default function PromptBuilder(): JSX.Element {
                     <Select
                       label="ID column"
                       value={excelIdCol}
-                      onChange={(e) => setExcelIdCol(e.target.value as string)}
+                      onChange={(e) => setExcelIdCol(e.target.value)}
                     >
                       {(excelInspect.sheets.find((s) => s.name === excelSheet)?.columns ?? []).map((c: string) => (
                         <MenuItem key={c} value={c}>{c}</MenuItem>
@@ -1280,7 +1288,7 @@ export default function PromptBuilder(): JSX.Element {
                         setExcelDescCols(
                           typeof e.target.value === "string"
                             ? e.target.value.split(",")
-                            : (e.target.value as string[])
+                            : (e.target.value)
                         )
                       }
                     >
@@ -1489,7 +1497,7 @@ export default function PromptBuilder(): JSX.Element {
                       <Select
                         label="ID column"
                         value={apiKeyColumn}
-                        onChange={(e) => setApiKeyColumn(e.target.value as string)}
+                        onChange={(e) => setApiKeyColumn(e.target.value)}
                       >
                         {apiColumns.map((c: string) => (
                           <MenuItem key={c} value={c}>
@@ -1508,7 +1516,7 @@ export default function PromptBuilder(): JSX.Element {
                           setApiDescColumns(
                             typeof e.target.value === "string"
                               ? e.target.value.split(",")
-                              : (e.target.value as string[])
+                              : (e.target.value)
                           )
                         }
                       >

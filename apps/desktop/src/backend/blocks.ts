@@ -55,11 +55,12 @@ export async function extractHtmlBlocks(filePath: string, config: HtmlConfig): P
   const text = await readFile(filePath, "utf8");
   const $ = cheerio.load(text);
   const units: PromptUnit[] = [];
-  const idAttr = config.idAttr || "id";
+  const idAttr = config.idAttr ?? "id";
 
   $(config.itemSelector).each((index, element) => {
     const item = $(element);
-    const id = resolveHtmlId($, item, idAttr, config.idSelector) || String(index + 1);
+    const resolvedId = resolveHtmlId(item, idAttr, config.idSelector);
+    const id = resolvedId.length > 0 ? resolvedId : String(index + 1);
     const body = resolveHtmlBody($, item, config.descSelector).trim();
 
     if (!body) {
@@ -73,7 +74,6 @@ export async function extractHtmlBlocks(filePath: string, config: HtmlConfig): P
 }
 
 function resolveHtmlId(
-  $: cheerio.CheerioAPI,
   item: cheerio.Cheerio<AnyNode>,
   idAttr: string,
   idSelector?: string,
@@ -82,11 +82,12 @@ function resolveHtmlId(
     const selected = item.find(idSelector).first();
 
     if (selected.length > 0) {
-      return selected.attr(idAttr)?.trim() || selected.text().trim();
+      const attrValue = selected.attr(idAttr)?.trim();
+      return attrValue && attrValue.length > 0 ? attrValue : selected.text().trim();
     }
   }
 
-  return item.attr(idAttr)?.trim() || "";
+  return item.attr(idAttr)?.trim() ?? "";
 }
 
 function resolveHtmlBody(

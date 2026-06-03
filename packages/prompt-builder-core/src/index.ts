@@ -9,3 +9,4 @@ export * from "./types/fs";
 export * from "./types/prompt";
 export * from "./types/session";
 export * from "./types/units";
+export * from "./lib/session";

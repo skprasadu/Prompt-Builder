@@ -47,7 +47,7 @@ export function toAsciiTree(root: Node, opts: Partial<AsciiTreeOptions> = {}): s
         lines.push(prefix + "… (+ more)");
         return;
       }
-      const child: any = children[i];
+      const child = children[i];
       const isLast = i === lastIdx;
       const branch = isLast ? "└── " : "├── ";
       const nextPrefix = prefix + (isLast ? "    " : "│   ");
