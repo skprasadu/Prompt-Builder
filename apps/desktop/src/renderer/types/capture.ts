@@ -1,3 +1,5 @@
+export type EntryPurpose = "software_implementation" | "research";
+
 export interface PromptWorkflowState {
   projectId: string;
   rootPath: string;
@@ -22,10 +24,13 @@ export interface LocalProjectState {
 export interface EntrySummary {
   id: string;
   projectId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   createdAt: string;
   updatedAt: string;
+  retentionDays: number;
+  expiresAt: string;
   captureDir: string;
   changedFiles: string[];
 }
@@ -60,6 +65,7 @@ export interface EntryDetail extends EntrySummary {
 export interface EntrySearchResult {
   entryId: string;
   chunkId: string;
+  entryPurpose: EntryPurpose;
   entryName: string;
   entryDescription: string;
   chunkKind: string;
@@ -71,6 +77,7 @@ export interface EntrySearchResult {
 
 export interface CreateEntryInput {
   projectId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   notes: string;
@@ -85,6 +92,7 @@ export interface CreateEntryInput {
 
 export interface RagContextEntry {
   entryId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   createdAt: string;

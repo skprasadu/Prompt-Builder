@@ -1,5 +1,7 @@
 export type EntryKind = "manual_capture" | "insight" | "imported";
 
+export type EntryPurpose = "software_implementation" | "research";
+
 export type ArtifactType =
   | "system_prompt"
   | "prompt"
@@ -22,10 +24,13 @@ export interface EntryManifest {
   id: string;
   projectId: string;
   kind: EntryKind;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   createdAt: string;
   updatedAt: string;
+  retentionDays: number;
+  expiresAt: string;
   source: {
     captureMethod: "manual-save" | "generated-insight" | "import";
     model?: string;

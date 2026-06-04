@@ -6,12 +6,13 @@ import { inspectExcel, extractExcelUnits } from "./excel";
 import { scanDir } from "./fileTree";
 import { readAsciiFiles } from "./ascii";
 import { buildRagContext, createEntry, deleteEntry, getEntryDetail, listEntries, searchEntries } from "./entryStore";
-import { askProjectMemory } from "./rag/ragService";
+import { generateInsight } from "./rag/ragService";
 import { getProjectState, saveProjectState } from "./projectStateStore";
 import { createLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
 import { loadSystemPrompt, saveSystemPrompt } from "./systemPrompt";
 
 type CommandArgs = Record<string, unknown>;
+type EntryPurpose = "software_implementation" | "research";
 
 export function registerCommandHandlers(): void {
   ipcMain.handle(
@@ -101,6 +102,7 @@ export function registerCommandHandlers(): void {
         case "entry:create":
           return createEntry({
             projectId: requiredString(args, "projectId"),
+            purpose: parseEntryPurpose(optionalString(args, "purpose")),
             name: requiredString(args, "name"),
             description: optionalString(args, "description") ?? "",
             notes: optionalString(args, "notes") ?? "",
@@ -150,15 +152,13 @@ export function registerCommandHandlers(): void {
           });
         }
 
-        case "rag:ask": {
-          const limit = optionalNumber(args, "limit");
+        case "insight:generate": {
           const selectedEntryId = optionalString(args, "selectedEntryId");
 
-          return askProjectMemory({
+          return generateInsight({
             projectId: requiredString(args, "projectId"),
-            question: requiredString(args, "question"),
+            intentId: requiredString(args, "intentId"),
             ...(selectedEntryId ? { selectedEntryId } : {}),
-            ...(limit !== undefined ? { limit } : {}),
           });
         }
 
@@ -281,4 +281,16 @@ function optionalStringRecord(
   }
 
   return out;
+}
+
+function parseEntryPurpose(value: string | undefined): EntryPurpose {
+  if (value === undefined || value === "software_implementation") {
+    return "software_implementation";
+  }
+
+  if (value === "research") {
+    return "research";
+  }
+
+  throw new Error(`Invalid entry purpose: ${value}`);
 }

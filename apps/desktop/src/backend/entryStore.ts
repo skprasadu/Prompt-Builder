@@ -7,8 +7,11 @@ import Database from "better-sqlite3";
 import { getGitChangedFilesSnapshot, type GitChangedFilesSnapshot } from "./git/gitService";
 import { getLocalProject, projectDir } from "./projectStore";
 
+export type EntryPurpose = "software_implementation" | "research";
+
 export interface CreateEntryArgs {
   projectId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   notes: string;
@@ -24,10 +27,13 @@ export interface CreateEntryArgs {
 export interface EntrySummary {
   id: string;
   projectId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   createdAt: string;
   updatedAt: string;
+  retentionDays: number;
+  expiresAt: string;
   captureDir: string;
   changedFiles: string[];
 }
@@ -62,6 +68,7 @@ export interface EntryDetail extends EntrySummary {
 export interface EntrySearchResult {
   entryId: string;
   chunkId: string;
+  entryPurpose: EntryPurpose;
   entryName: string;
   entryDescription: string;
   chunkKind: string;
@@ -79,6 +86,7 @@ export interface DeleteEntryResult {
 
 export interface RagContextEntry {
   entryId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   createdAt: string;
@@ -115,12 +123,15 @@ interface ChunkRecord {
 interface SqlEntryRow {
   id: string;
   projectId: string;
+  purpose: EntryPurpose | null;
   name: string;
   description: string | null;
   userNotes: string | null;
   summary: string | null;
   createdAt: string;
   updatedAt: string;
+  retentionDays: number | null;
+  expiresAt: string | null;
   syncStatus: string;
   captureDir: string;
 }
@@ -147,6 +158,7 @@ interface SqlChunkRow {
 interface SqlSearchRow {
   entryId: string;
   chunkId: string;
+  entryPurpose: EntryPurpose | null;
   entryName: string;
   entryDescription: string | null;
   chunkKind: string;
@@ -165,6 +177,8 @@ interface SqlEntryPathRow {
 
 export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> {
   const now = new Date().toISOString();
+  const retentionDays = 90;
+  const expiresAt = addDaysIso(now, retentionDays);
   const entryId = `entry_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   const captureDir = captureDirectory(args.projectId, now, entryId, args.name);
   const project = await getLocalProject(args.projectId);
@@ -230,10 +244,13 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
   const manifest = {
     id: entryId,
     projectId: args.projectId,
+    purpose: args.purpose,
     name: args.name,
     description: args.description,
     createdAt: now,
     updatedAt: now,
+    retentionDays,
+    expiresAt,
     source: {
       captureMethod: "manual-save",
     },
@@ -259,11 +276,14 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
   indexEntry({
     projectId: args.projectId,
     entryId,
+    purpose: args.purpose,
     name: args.name,
     description: args.description,
     notes: args.notes,
     createdAt: now,
     updatedAt: now,
+    retentionDays,
+    expiresAt,
     captureDir,
     artifacts,
     chunks,
@@ -273,10 +293,13 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
   return {
     id: entryId,
     projectId: args.projectId,
+    purpose: args.purpose,
     name: args.name,
     description: args.description,
     createdAt: now,
     updatedAt: now,
+    retentionDays,
+    expiresAt,
     captureDir,
     changedFiles,
   };
@@ -290,10 +313,13 @@ export function listEntries(projectId: string): EntrySummary[] {
       select
         id,
         project_id as projectId,
+        purpose,
         name,
         description,
         created_at as createdAt,
         updated_at as updatedAt,
+        retention_days as retentionDays,
+        expires_at as expiresAt,
         capture_dir as captureDir
       from entries
       where project_id = ?
@@ -306,6 +332,9 @@ export function listEntries(projectId: string): EntrySummary[] {
   return rows.map((row) => ({
     ...row,
     description: row.description ?? "",
+    purpose: row.purpose ?? "software_implementation",
+    retentionDays: row.retentionDays ?? 90,
+    expiresAt: row.expiresAt ?? "",
     changedFiles: getChangedFiles(db, row.id),
   }));
 }
@@ -321,12 +350,15 @@ export function getEntryDetail(args: {
       select
         id,
         project_id as projectId,
+        purpose,
         name,
         description,
         user_notes as userNotes,
         summary,
         created_at as createdAt,
         updated_at as updatedAt,
+        retention_days as retentionDays,
+        expires_at as expiresAt,
         sync_status as syncStatus,
         capture_dir as captureDir
       from entries
@@ -378,12 +410,15 @@ export function getEntryDetail(args: {
   return {
     id: row.id,
     projectId: row.projectId,
+    purpose: row.purpose ?? "software_implementation",
     name: row.name,
     description: row.description ?? "",
     userNotes: row.userNotes ?? "",
     summary: row.summary ?? "",
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    retentionDays: row.retentionDays ?? 90,
+    expiresAt: row.expiresAt ?? "",
     syncStatus: row.syncStatus,
     captureDir: row.captureDir,
     changedFiles: getChangedFiles(db, row.id),
@@ -511,6 +546,7 @@ export function searchEntries(args: {
       select
         m.entry_id as entryId,
         m.chunk_id as chunkId,
+        e.purpose as entryPurpose,
         e.name as entryName,
         e.description as entryDescription,
         c.kind as chunkKind,
@@ -531,6 +567,7 @@ export function searchEntries(args: {
   return rows.map((row) => ({
     entryId: row.entryId,
     chunkId: row.chunkId,
+    entryPurpose: row.entryPurpose ?? "software_implementation",
     entryName: row.entryName,
     entryDescription: row.entryDescription ?? "",
     chunkKind: row.chunkKind,
@@ -566,6 +603,7 @@ export function buildRagContext(args: {
   for (const result of results) {
     const current = entriesById.get(result.entryId) ?? {
       entryId: result.entryId,
+      purpose: result.entryPurpose,
       name: result.entryName,
       description: result.entryDescription,
       createdAt: result.createdAt,
@@ -607,11 +645,14 @@ export function buildRagContext(args: {
 function indexEntry(args: {
   projectId: string;
   entryId: string;
+  purpose: EntryPurpose;
   name: string;
   description: string;
   notes: string;
   createdAt: string;
   updatedAt: string;
+  retentionDays: number;
+  expiresAt: string;
   captureDir: string;
   artifacts: ArtifactRecord[];
   chunks: ChunkRecord[];
@@ -623,19 +664,22 @@ function indexEntry(args: {
     insert or replace into entries (
       id,
       project_id,
+      purpose,
       name,
       description,
       user_notes,
       summary,
       created_at,
       updated_at,
+      retention_days,
+      expires_at,
       sync_status,
       storage_provider,
       bucket,
       object_prefix,
       content_sha256,
       capture_dir
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   );
 
@@ -706,12 +750,15 @@ function indexEntry(args: {
     insertEntry.run(
       args.entryId,
       args.projectId,
+      args.purpose,
       args.name,
       args.description,
       args.notes,
       "",
       args.createdAt,
       args.updatedAt,
+      args.retentionDays,
+      args.expiresAt,
       "local_only",
       "local",
       "",
@@ -787,12 +834,15 @@ function ensureSchema(db: Database.Database): void {
     create table if not exists entries (
       id text primary key,
       project_id text not null,
+      purpose text not null default 'software_implementation',
       name text not null,
       description text,
       user_notes text,
       summary text,
       created_at text not null,
       updated_at text not null,
+      retention_days integer not null default 90,
+      expires_at text,
       sync_status text not null,
       storage_provider text,
       bucket text,
@@ -864,6 +914,25 @@ function ensureSchema(db: Database.Database): void {
       updated_at text not null
     );
   `);
+
+  ensureEntrySchemaMigrations(db);
+}
+
+function ensureEntrySchemaMigrations(db: Database.Database): void {
+  const rows = db.prepare("pragma table_info(entries)").all() as { name: string }[];
+  const columns = new Set(rows.map((row) => row.name));
+
+  if (!columns.has("purpose")) {
+    db.exec("alter table entries add column purpose text not null default 'software_implementation'");
+  }
+
+  if (!columns.has("retention_days")) {
+    db.exec("alter table entries add column retention_days integer not null default 90");
+  }
+
+  if (!columns.has("expires_at")) {
+    db.exec("alter table entries add column expires_at text");
+  }
 }
 
 async function writeArtifact(
@@ -972,6 +1041,7 @@ function getChangedFiles(db: Database.Database, entryId: string): string[] {
 function detailToRagEntry(detail: EntryDetail): RagContextEntry {
   return {
     entryId: detail.id,
+    purpose: detail.purpose,
     name: detail.name,
     description: detail.description,
     createdAt: detail.createdAt,
@@ -1001,6 +1071,7 @@ function renderRagContext(query: string, entries: RagContextEntry[]): string {
   for (const entry of entries) {
     lines.push(`## ${entry.name}`);
     lines.push(`Entry ID: ${entry.entryId}`);
+    lines.push(`Purpose: ${entry.purpose}`);
     lines.push(`Created: ${entry.createdAt}`);
 
     if (entry.description) {
@@ -1078,4 +1149,10 @@ function toFtsQuery(value: string): string {
     .filter((part) => part.length > 0)
     .map((part) => `"${part}"`)
     .join(" ");
+}
+
+function addDaysIso(value: string, days: number): string {
+  const date = new Date(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
 }

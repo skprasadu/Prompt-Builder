@@ -2,27 +2,32 @@ import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SaveAltIcon from "@mui/icons-material/SaveAlt";
 import SearchIcon from "@mui/icons-material/Search";
-import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
 import {
   Alert,
   Box,
   Button,
   Checkbox,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
+  FormControl,
   FormControlLabel,
   IconButton,
+  InputLabel,
   List,
   ListItemButton,
   ListItemText,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   Tab,
   Tabs,
@@ -31,11 +36,14 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useMemo, useState, type JSX } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { invoke, writeClipboardText } from "../lib/desktop";
 import type {
   CreateEntryInput,
   EntryDetail,
+  EntryPurpose,
   EntrySearchResult,
   EntrySummary,
   PromptWorkflowState,
@@ -48,39 +56,34 @@ export interface OutputIntelligenceProps {
   promptState: PromptWorkflowState | null;
 }
 
-type OutputIntelligencePanel = "chat" | "entries";
+type OutputIntelligencePanel = "insights" | "entries";
+type InsightIntentId =
+  | "daily_engineering_logs"
+  | "research_notes"
+  | "linkedin_posts"
+  | "technical_blog_drafts"
+  | "architecture_explainers"
+  | "implementation_summaries"
+  | "lessons_learned";
 type MemoryItem = EntrySummary | EntrySearchResult;
 
-const SUGGESTED_QUESTIONS = [
-  "Summarize this project",
-  "What changed recently?",
-  "What did this entry implement?",
-  "Which files changed?",
-  "What decisions did we make?",
-  "What should I test?",
-  "What is incomplete?",
-  "Write team update",
-  "Draft PR description",
-  "List follow-up tasks",
-  "Explain selected entry",
-  "Find related entries",
-  "Show risks",
-  "What changed in PromptBuilder?",
-  "What changed in Output Intelligence?",
-] as const;
+const INSIGHT_CHIPS: {
+  id: InsightIntentId;
+  label: string;
+}[] = [
+  { id: "daily_engineering_logs", label: "daily engineering logs" },
+  { id: "research_notes", label: "research notes" },
+  { id: "linkedin_posts", label: "LinkedIn posts" },
+  { id: "technical_blog_drafts", label: "technical blog drafts" },
+  { id: "architecture_explainers", label: "architecture explainers" },
+  { id: "implementation_summaries", label: "implementation summaries" },
+  { id: "lessons_learned", label: "lessons learned" },
+];
 
 function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (error === null || error === undefined) {
-    return "Unknown error";
-  }
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error === null || error === undefined) return "Unknown error";
 
   try {
     return JSON.stringify(error);
@@ -122,8 +125,9 @@ export default function OutputIntelligence({
   project,
   promptState,
 }: OutputIntelligenceProps): JSX.Element {
-  const [panel, setPanel] = useState<OutputIntelligencePanel>("chat");
+  const [panel, setPanel] = useState<OutputIntelligencePanel>("insights");
 
+  const [entryPurpose, setEntryPurpose] = useState<EntryPurpose>("software_implementation");
   const [entryName, setEntryName] = useState<string>(() => defaultEntryName());
   const [description, setDescription] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
@@ -134,10 +138,11 @@ export default function OutputIntelligence({
   const [entries, setEntries] = useState<EntrySummary[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<EntryDetail | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState<boolean>(false);
+  const [contextOpen, setContextOpen] = useState<boolean>(false);
   const [query, setQuery] = useState<string>("");
-  const [askText, setAskText] = useState<string>("");
   const [answer, setAnswer] = useState<RagAnswer | null>(null);
   const [results, setResults] = useState<EntrySearchResult[]>([]);
+  const [activeIntentId, setActiveIntentId] = useState<InsightIntentId | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,6 +193,7 @@ export default function OutputIntelligence({
 
     const input: CreateEntryInput = {
       projectId: project.id,
+      purpose: entryPurpose,
       name,
       description: description.trim(),
       notes,
@@ -203,6 +209,7 @@ export default function OutputIntelligence({
     try {
       const entryArgs: Record<string, unknown> = { ...input };
       const savedEntry = await invoke<EntrySummary>("entry:create", entryArgs);
+      setEntryPurpose("software_implementation");
       setEntryName(defaultEntryName());
       setDescription("");
       setNotes("");
@@ -251,37 +258,28 @@ export default function OutputIntelligence({
     }
   }
 
-  async function askProject(questionOverride?: string): Promise<void> {
-    const question = (questionOverride ?? askText).trim();
-
-    if (!question) {
-      setError("Ask a project-memory question first.");
-      return;
-    }
-
-    setAskText(question);
-    setPanel("chat");
+  async function generateInsight(intentId: InsightIntentId): Promise<void> {
+    setPanel("insights");
+    setActiveIntentId(intentId);
     setBusy(true);
     setError(null);
 
     try {
-      const askArgs: Record<string, unknown> = {
+      const nextAnswer = await invoke<RagAnswer>("insight:generate", {
         projectId: project.id,
-        question,
-        limit: 8,
+        intentId,
         ...(selectedEntry?.id ? { selectedEntryId: selectedEntry.id } : {}),
-      };
-
-      const nextAnswer = await invoke<RagAnswer>("rag:ask", askArgs);
+      });
       setAnswer(nextAnswer);
 
       if (nextAnswer.context.entries[0]) {
         await openEntry(nextAnswer.context.entries[0].entryId);
       }
     } catch (err: unknown) {
-      setError(`Project memory failed: ${toErrorMessage(err)}`);
+      setError(`Insight generation failed: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
+      setActiveIntentId(null);
     }
   }
 
@@ -297,15 +295,8 @@ export default function OutputIntelligence({
     }
   }
 
-  async function askAboutEntry(question: string): Promise<void> {
-    setPanel("chat");
-    await askProject(question);
-  }
-
   async function deleteSelectedEntry(): Promise<void> {
-    if (!selectedEntry) {
-      return;
-    }
+    if (!selectedEntry) return;
 
     const deletedEntryId = selectedEntry.id;
     setBusy(true);
@@ -340,9 +331,7 @@ export default function OutputIntelligence({
   }
 
   async function openCaptureFolder(): Promise<void> {
-    if (!selectedEntry) {
-      return;
-    }
+    if (!selectedEntry) return;
 
     await invoke<string>("shell:open_path", {
       path: selectedEntry.captureDir,
@@ -350,26 +339,17 @@ export default function OutputIntelligence({
   }
 
   async function copySelectedEntryContext(): Promise<void> {
-    if (!selectedEntry) {
-      return;
-    }
-
+    if (!selectedEntry) return;
     await writeClipboardText(renderEntryContext(selectedEntry));
   }
 
   async function copyChangedFiles(): Promise<void> {
-    if (!selectedEntry) {
-      return;
-    }
-
+    if (!selectedEntry) return;
     await writeClipboardText(selectedEntry.changedFiles.join("\n"));
   }
 
   async function copyAnswer(): Promise<void> {
-    if (!answer) {
-      return;
-    }
-
+    if (!answer) return;
     await writeClipboardText(answer.answer);
   }
 
@@ -398,7 +378,7 @@ export default function OutputIntelligence({
             onChange={(_event, value) => setPanel(value as OutputIntelligencePanel)}
             sx={{ minHeight: 42, flex: 1 }}
           >
-            <Tab label="Chat with Data" value="chat" sx={{ minHeight: 42 }} />
+            <Tab label="Insights" value="insights" sx={{ minHeight: 42 }} />
             <Tab label="Manage Entries" value="entries" sx={{ minHeight: 42 }} />
           </Tabs>
 
@@ -413,290 +393,33 @@ export default function OutputIntelligence({
         </Stack>
       </Paper>
 
-      {panel === "chat" ? (
+      {panel === "insights" ? (
         <Box
           sx={{
             minHeight: 0,
             display: "grid",
-            gridTemplateRows: "auto auto minmax(0, 1fr)",
+            gridTemplateRows: "auto minmax(0, 1fr)",
             gap: 1.5,
             p: 2,
             overflow: "hidden",
           }}
         >
           <Paper variant="outlined" sx={{ p: 1.5 }}>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <TextField
-                label="Ask this project"
-                size="small"
-                value={askText}
-                onChange={(event) => setAskText(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void askProject();
-                  }
-                }}
-                fullWidth
-              />
-
-              <Tooltip title="Ask project memory" arrow>
-                <span>
-                  <IconButton
-                    aria-label="Ask project memory"
-                    color="primary"
-                    disabled={busy || !askText.trim()}
-                    onClick={() => void askProject()}
-                  >
-                    <SmartToyOutlinedIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </Stack>
-          </Paper>
-
-          <Paper variant="outlined" sx={{ p: 1.5 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-              Suggested questions
-            </Typography>
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
-              {SUGGESTED_QUESTIONS.map((question) => (
+              {INSIGHT_CHIPS.map((chip) => (
                 <Chip
-                  key={question}
-                  label={question}
+                  key={chip.id}
+                  label={chip.label}
                   size="small"
                   variant="outlined"
-                  onClick={() => void askProject(question)}
+                  disabled={busy}
+                  {...(activeIntentId === chip.id
+                    ? { icon: <CircularProgress size={14} /> }
+                    : {})}
+                  onClick={() => void generateInsight(chip.id)}
                 />
               ))}
             </Stack>
-          </Paper>
-
-          <Box
-            sx={{
-              minHeight: 0,
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1.35fr) minmax(320px, 0.65fr)" },
-              gap: 1.5,
-              overflow: "hidden",
-            }}
-          >
-            <Paper variant="outlined" sx={{ minHeight: 0, overflow: "auto", p: 2 }}>
-              {error && (
-                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-                  {error}
-                </Alert>
-              )}
-
-              <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 700 }}>
-                  Answer
-                </Typography>
-                <Tooltip title="Copy answer" arrow>
-                  <span>
-                    <IconButton
-                      aria-label="Copy answer"
-                      disabled={!answer}
-                      onClick={() => void copyAnswer()}
-                    >
-                      <ContentCopyIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-
-              {answer ? (
-                <>
-                  <Typography
-                    component="pre"
-                    variant="body2"
-                    sx={{
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "inherit",
-                      m: 0,
-                    }}
-                  >
-                    {answer.answer}
-                  </Typography>
-
-                  <Stack direction="row" spacing={0.75} sx={{ mt: 2, flexWrap: "wrap", rowGap: 0.75 }}>
-                    <Chip size="small" label={`Model: ${answer.model}`} />
-                    <Chip size="small" label={`Retrieved: ${answer.context.entries.length}`} />
-                  </Stack>
-                </>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  Ask a question or choose a suggested question.
-                </Typography>
-              )}
-            </Paper>
-
-            <Paper variant="outlined" sx={{ minHeight: 0, overflow: "auto", p: 2 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                Context used
-              </Typography>
-
-              {answer?.context.entries.length ? (
-                <Stack spacing={1.25}>
-                  {answer.context.entries.map((entry) => (
-                    <Paper
-                      key={entry.entryId}
-                      variant="outlined"
-                      sx={{ p: 1, cursor: "pointer" }}
-                      onClick={() => void openEntry(entry.entryId)}
-                    >
-                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                        {entry.name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {entry.description || entry.createdAt}
-                      </Typography>
-
-                      {entry.changedFiles.length > 0 && (
-                        <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}>
-                          {entry.changedFiles.slice(0, 4).map((filePath) => (
-                            <Chip key={filePath} size="small" label={basename(filePath)} />
-                          ))}
-                          {entry.changedFiles.length > 4 && (
-                            <Chip size="small" label={`+${entry.changedFiles.length - 4}`} />
-                          )}
-                        </Stack>
-                      )}
-                    </Paper>
-                  ))}
-                </Stack>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  Retrieved entries will appear here.
-                </Typography>
-              )}
-
-              {selectedEntry && (
-                <>
-                  <Divider sx={{ my: 2 }} />
-                  <EntryDetailPanel
-                    selectedEntry={selectedEntry}
-                    compact
-                    onCopyContext={copySelectedEntryContext}
-                    onCopyChangedFiles={copyChangedFiles}
-                    onOpenFolder={openCaptureFolder}
-                    onAskEntry={askAboutEntry}
-                    onDeleteEntry={() => setDeleteConfirmOpen(true)}
-                  />
-                </>
-              )}
-            </Paper>
-          </Box>
-        </Box>
-      ) : (
-        <Box
-          sx={{
-            minHeight: 0,
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "minmax(340px, 440px) minmax(0, 1fr)" },
-            gap: 1.5,
-            p: 2,
-            overflow: "hidden",
-          }}
-        >
-          <Paper
-            variant="outlined"
-            sx={{
-              minHeight: 0,
-              display: "grid",
-              gridTemplateRows: "auto auto minmax(0, 1fr)",
-              overflow: "hidden",
-            }}
-          >
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ p: 1.5 }}>
-              <TextField
-                label="Search entries"
-                size="small"
-                value={query}
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void searchEntries();
-                  }
-                }}
-                fullWidth
-              />
-
-              <Tooltip title="Search" arrow>
-                <IconButton
-                  aria-label="Search"
-                  disabled={busy || !query.trim()}
-                  onClick={() => void searchEntries()}
-                >
-                  <SearchIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip title="Refresh entries" arrow>
-                <IconButton
-                  aria-label="Refresh entries"
-                  disabled={busy}
-                  onClick={() => void refreshEntries()}
-                >
-                  <RefreshIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Stack>
-
-            <Divider />
-
-            <Box sx={{ minHeight: 0, overflow: "auto" }}>
-              <List disablePadding>
-                {visibleItems.map((item) => {
-                  const id = entryIdFor(item);
-                  const changedFiles = changedFilesFor(item);
-
-                  return (
-                    <ListItemButton
-                      key={isSearchResult(item) ? item.chunkId : item.id}
-                      selected={selectedEntry?.id === id}
-                      alignItems="flex-start"
-                      onClick={() => void openEntry(id)}
-                    >
-                      <ListItemText
-                        primary={
-                          <Stack spacing={0.75}>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap>
-                              {itemName(item)}
-                            </Typography>
-                            {changedFiles.length > 0 && (
-                              <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
-                                {changedFiles.slice(0, 3).map((filePath) => (
-                                  <Chip
-                                    key={filePath}
-                                    size="small"
-                                    label={basename(filePath)}
-                                  />
-                                ))}
-                                {changedFiles.length > 3 && (
-                                  <Chip size="small" label={`+${changedFiles.length - 3}`} />
-                                )}
-                              </Stack>
-                            )}
-                          </Stack>
-                        }
-                        secondary={
-                          isSearchResult(item)
-                            ? `${item.chunkKind}: ${item.chunkText}`
-                            : itemDescription(item) || item.createdAt
-                        }
-                        secondaryTypographyProps={{ noWrap: true }}
-                      />
-                    </ListItemButton>
-                  );
-                })}
-
-                {visibleItems.length === 0 && (
-                  <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                    No entries yet.
-                  </Typography>
-                )}
-              </List>
-            </Box>
           </Paper>
 
           <Paper variant="outlined" sx={{ minHeight: 0, overflow: "auto", p: 2 }}>
@@ -706,23 +429,77 @@ export default function OutputIntelligence({
               </Alert>
             )}
 
-            {selectedEntry ? (
-              <EntryDetailPanel
-                selectedEntry={selectedEntry}
-                onCopyContext={copySelectedEntryContext}
-                onCopyChangedFiles={copyChangedFiles}
-                onOpenFolder={openCaptureFolder}
-                onAskEntry={askAboutEntry}
-                onDeleteEntry={() => setDeleteConfirmOpen(true)}
-              />
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+              <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 700 }}>
+                Answer
+              </Typography>
+
+              <Tooltip title="Context used" arrow>
+                <span>
+                  <IconButton
+                    aria-label="Context used"
+                    disabled={!answer}
+                    onClick={() => setContextOpen(true)}
+                  >
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Tooltip title="Copy answer" arrow>
+                <span>
+                  <IconButton
+                    aria-label="Copy answer"
+                    disabled={!answer}
+                    onClick={() => void copyAnswer()}
+                  >
+                    <ContentCopyIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Stack>
+
+            {busy && activeIntentId ? (
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <CircularProgress size={18} />
+                <Typography variant="body2" color="text.secondary">
+                  Generating
+                </Typography>
+              </Stack>
+            ) : answer ? (
+              <MarkdownAnswer markdown={answer.answer} />
             ) : (
               <Typography variant="body2" color="text.secondary">
-                Select an entry.
+                Choose an insight.
               </Typography>
             )}
           </Paper>
         </Box>
+      ) : (
+        <ManageEntriesPanel
+          busy={busy}
+          error={error}
+          query={query}
+          visibleItems={visibleItems}
+          selectedEntry={selectedEntry}
+          setError={setError}
+          setQuery={setQuery}
+          searchEntries={searchEntries}
+          refreshEntries={refreshEntries}
+          openEntry={openEntry}
+          copySelectedEntryContext={copySelectedEntryContext}
+          copyChangedFiles={copyChangedFiles}
+          openCaptureFolder={openCaptureFolder}
+          setDeleteConfirmOpen={setDeleteConfirmOpen}
+        />
       )}
+
+      <ContextDialog
+        open={contextOpen}
+        answer={answer}
+        onClose={() => setContextOpen(false)}
+        onOpenEntry={openEntry}
+      />
 
       <Dialog
         open={deleteConfirmOpen}
@@ -755,6 +532,18 @@ export default function OutputIntelligence({
         <DialogTitle>Capture output</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={1.25} sx={{ pt: 0.5 }}>
+            <FormControl size="small" fullWidth>
+              <InputLabel>Purpose</InputLabel>
+              <Select
+                label="Purpose"
+                value={entryPurpose}
+                onChange={(event) => setEntryPurpose(event.target.value)}
+              >
+                <MenuItem value="software_implementation">Software Implementation</MenuItem>
+                <MenuItem value="research">Research</MenuItem>
+              </Select>
+            </FormControl>
+
             <TextField
               label="Entry name"
               size="small"
@@ -832,13 +621,182 @@ export default function OutputIntelligence({
   );
 }
 
+interface ManageEntriesPanelProps {
+  busy: boolean;
+  error: string | null;
+  query: string;
+  visibleItems: MemoryItem[];
+  selectedEntry: EntryDetail | null;
+  setError: (value: string | null) => void;
+  setQuery: (value: string) => void;
+  searchEntries: () => Promise<void>;
+  refreshEntries: () => Promise<void>;
+  openEntry: (entryId: string) => Promise<void>;
+  copySelectedEntryContext: () => Promise<void>;
+  copyChangedFiles: () => Promise<void>;
+  openCaptureFolder: () => Promise<void>;
+  setDeleteConfirmOpen: (open: boolean) => void;
+}
+
+function ManageEntriesPanel({
+  busy,
+  error,
+  query,
+  visibleItems,
+  selectedEntry,
+  setError,
+  setQuery,
+  searchEntries,
+  refreshEntries,
+  openEntry,
+  copySelectedEntryContext,
+  copyChangedFiles,
+  openCaptureFolder,
+  setDeleteConfirmOpen,
+}: ManageEntriesPanelProps): JSX.Element {
+  return (
+    <Box
+      sx={{
+        minHeight: 0,
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", md: "minmax(340px, 440px) minmax(0, 1fr)" },
+        gap: 1.5,
+        p: 2,
+        overflow: "hidden",
+      }}
+    >
+      <Paper
+        variant="outlined"
+        sx={{
+          minHeight: 0,
+          display: "grid",
+          gridTemplateRows: "auto auto minmax(0, 1fr)",
+          overflow: "hidden",
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ p: 1.5 }}>
+          <TextField
+            label="Search entries"
+            size="small"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                void searchEntries();
+              }
+            }}
+            fullWidth
+          />
+
+          <Tooltip title="Search" arrow>
+            <IconButton
+              aria-label="Search"
+              disabled={busy || !query.trim()}
+              onClick={() => void searchEntries()}
+            >
+              <SearchIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
+          <Tooltip title="Refresh entries" arrow>
+            <IconButton
+              aria-label="Refresh entries"
+              disabled={busy}
+              onClick={() => void refreshEntries()}
+            >
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+
+        <Divider />
+
+        <Box sx={{ minHeight: 0, overflow: "auto" }}>
+          <List disablePadding>
+            {visibleItems.map((item) => {
+              const id = entryIdFor(item);
+              const changedFiles = changedFilesFor(item);
+
+              return (
+                <ListItemButton
+                  key={isSearchResult(item) ? item.chunkId : item.id}
+                  selected={selectedEntry?.id === id}
+                  alignItems="flex-start"
+                  onClick={() => void openEntry(id)}
+                >
+                  <ListItemText
+                    primary={
+                      <Stack spacing={0.75}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap>
+                          {itemName(item)}
+                        </Typography>
+                        {changedFiles.length > 0 && (
+                          <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+                            {changedFiles.slice(0, 3).map((filePath) => (
+                              <Chip
+                                key={filePath}
+                                size="small"
+                                label={basename(filePath)}
+                              />
+                            ))}
+                            {changedFiles.length > 3 && (
+                              <Chip size="small" label={`+${changedFiles.length - 3}`} />
+                            )}
+                          </Stack>
+                        )}
+                      </Stack>
+                    }
+                    secondary={
+                      isSearchResult(item)
+                        ? `${item.chunkKind}: ${item.chunkText}`
+                        : itemDescription(item) || item.createdAt
+                    }
+                    secondaryTypographyProps={{ noWrap: true }}
+                  />
+                </ListItemButton>
+              );
+            })}
+
+            {visibleItems.length === 0 && (
+              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+                No entries yet.
+              </Typography>
+            )}
+          </List>
+        </Box>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ minHeight: 0, overflow: "auto", p: 2 }}>
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+            {error}
+          </Alert>
+        )}
+
+        {selectedEntry ? (
+          <EntryDetailPanel
+            selectedEntry={selectedEntry}
+            onCopyContext={copySelectedEntryContext}
+            onCopyChangedFiles={copyChangedFiles}
+            onOpenFolder={openCaptureFolder}
+            onDeleteEntry={() => setDeleteConfirmOpen(true)}
+          />
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            Select an entry.
+          </Typography>
+        )}
+      </Paper>
+    </Box>
+  );
+}
+
 interface EntryDetailPanelProps {
   selectedEntry: EntryDetail;
   compact?: boolean;
   onCopyContext: () => Promise<void>;
   onCopyChangedFiles: () => Promise<void>;
   onOpenFolder: () => Promise<void>;
-  onAskEntry: (question: string) => Promise<void>;
   onDeleteEntry: () => void;
 }
 
@@ -848,7 +806,6 @@ function EntryDetailPanel({
   onCopyContext,
   onCopyChangedFiles,
   onOpenFolder,
-  onAskEntry,
   onDeleteEntry,
 }: EntryDetailPanelProps): JSX.Element {
   return (
@@ -857,15 +814,6 @@ function EntryDetailPanel({
         <Typography variant="subtitle1" sx={{ flex: 1, fontWeight: 700 }} noWrap>
           {selectedEntry.name}
         </Typography>
-
-        <Tooltip title="Ask about this entry" arrow>
-          <IconButton
-            aria-label="Ask about this entry"
-            onClick={() => void onAskEntry("What did this entry implement?")}
-          >
-            <SmartToyOutlinedIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
 
         <Tooltip title="Copy entry context" arrow>
           <IconButton
@@ -980,10 +928,93 @@ function EntryDetailPanel({
   );
 }
 
+function ContextDialog({
+  open,
+  answer,
+  onClose,
+  onOpenEntry,
+}: {
+  open: boolean;
+  answer: RagAnswer | null;
+  onClose: () => void;
+  onOpenEntry: (entryId: string) => Promise<void>;
+}): JSX.Element {
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Context used</DialogTitle>
+      <DialogContent dividers>
+        {answer?.context.entries.length ? (
+          <Stack spacing={1}>
+            {answer.context.entries.map((entry) => (
+              <Paper
+                key={entry.entryId}
+                variant="outlined"
+                sx={{ p: 1, cursor: "pointer" }}
+                onClick={() => void onOpenEntry(entry.entryId)}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {entry.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {entry.description || entry.createdAt}
+                </Typography>
+                {entry.changedFiles.length > 0 && (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}>
+                    {entry.changedFiles.slice(0, 4).map((filePath) => (
+                      <Chip key={filePath} size="small" label={basename(filePath)} />
+                    ))}
+                    {entry.changedFiles.length > 4 && (
+                      <Chip size="small" label={`+${entry.changedFiles.length - 4}`} />
+                    )}
+                  </Stack>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No context available.
+          </Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function MarkdownAnswer({ markdown }: { markdown: string }): JSX.Element {
+  return (
+    <Box
+      sx={{
+        "& p": { mt: 0, mb: 1 },
+        "& ul, & ol": { mt: 0, mb: 1, pl: 3 },
+        "& h1, & h2, & h3": { mt: 2, mb: 1 },
+        "& code": {
+          fontFamily:
+            'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+        },
+        "& pre": {
+          overflow: "auto",
+          p: 1,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          bgcolor: "background.default",
+        },
+      }}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+    </Box>
+  );
+}
+
 function renderEntryContext(entry: EntryDetail): string {
   const lines = [
     `# Entry: ${entry.name}`,
     "",
+    `Purpose: ${entry.purpose}`,
     `Description: ${entry.description}`,
     `Created: ${entry.createdAt}`,
     "",
