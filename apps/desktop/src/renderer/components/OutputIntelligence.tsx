@@ -128,7 +128,7 @@ export default function OutputIntelligence({
   const [description, setDescription] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [aiOutput, setAiOutput] = useState<string>("");
-  const [includeGitChangedFiles, setIncludeGitChangedFiles] = useState<boolean>(false);
+  const [includeGitChangedFiles, setIncludeGitChangedFiles] = useState<boolean>(true);
   const [captureOpen, setCaptureOpen] = useState<boolean>(false);
 
   const [entries, setEntries] = useState<EntrySummary[]>([]);
@@ -207,7 +207,7 @@ export default function OutputIntelligence({
       setDescription("");
       setNotes("");
       setAiOutput("");
-      setIncludeGitChangedFiles(false);
+      setIncludeGitChangedFiles(true);
       setCaptureOpen(false);
       setPanel("entries");
       await refreshEntries();

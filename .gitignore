@@ -40,5 +40,3 @@ packages/*/dist/
 .env.local
 
 **/llm.config.json
-# Local LLM secrets
-apps/desktop/llm.config.json
