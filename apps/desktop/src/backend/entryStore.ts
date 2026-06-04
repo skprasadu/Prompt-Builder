@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -69,6 +69,12 @@ export interface EntrySearchResult {
   createdAt: string;
   changedFiles: string[];
   score: number;
+}
+
+export interface DeleteEntryResult {
+  entryId: string;
+  deleted: boolean;
+  captureDir: string;
 }
 
 export interface RagContextEntry {
@@ -151,6 +157,10 @@ interface SqlSearchRow {
 
 interface SqlChangedFileRow {
   filePath: string;
+}
+
+interface SqlEntryPathRow {
+  captureDir: string;
 }
 
 export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> {
@@ -397,6 +407,90 @@ export function getEntryDetail(args: {
   };
 }
 
+export async function deleteEntry(args: {
+  projectId: string;
+  entryId: string;
+}): Promise<DeleteEntryResult> {
+  const db = openCatalog(args.projectId);
+  const row = db
+    .prepare(
+      `
+      select capture_dir as captureDir
+      from entries
+      where project_id = ? and id = ?
+      `,
+    )
+    .get(args.projectId, args.entryId) as SqlEntryPathRow | undefined;
+
+  if (!row) {
+    throw new Error(`Entry not found: ${args.entryId}`);
+  }
+
+  const deleteTx = db.transaction(() => {
+    db.prepare(
+      `
+      delete from chunk_index_map
+      where entry_id = ?
+      `,
+    ).run(args.entryId);
+
+    db.prepare(
+      `
+      delete from chunks
+      where entry_id = ?
+      `,
+    ).run(args.entryId);
+
+    db.prepare(
+      `
+      delete from artifacts
+      where entry_id = ?
+      `,
+    ).run(args.entryId);
+
+    db.prepare(
+      `
+      delete from changed_files
+      where entry_id = ?
+      `,
+    ).run(args.entryId);
+
+    db.prepare(
+      `
+      delete from entry_tags
+      where entry_id = ?
+      `,
+    ).run(args.entryId);
+
+    db.prepare(
+      `
+      delete from sync_queue
+      where entry_id = ?
+      `,
+    ).run(args.entryId);
+
+    db.prepare(
+      `
+      delete from entries
+      where project_id = ? and id = ?
+      `,
+    ).run(args.projectId, args.entryId);
+  });
+
+  deleteTx();
+
+  await rm(row.captureDir, {
+    recursive: true,
+    force: true,
+  });
+
+  return {
+    entryId: args.entryId,
+    deleted: true,
+    captureDir: row.captureDir,
+  };
+}
+
 export function searchEntries(args: {
   projectId: string;
   query: string;
@@ -450,15 +544,24 @@ export function searchEntries(args: {
 export function buildRagContext(args: {
   projectId: string;
   query: string;
+  selectedEntryId?: string;
   limit?: number;
 }): RagContextResult {
+  const entriesById = new Map<string, RagContextEntry>();
+
+  if (args.selectedEntryId) {
+    const detail = getEntryDetail({
+      projectId: args.projectId,
+      entryId: args.selectedEntryId,
+    });
+    entriesById.set(detail.id, detailToRagEntry(detail));
+  }
+
   const results = searchEntries({
     projectId: args.projectId,
     query: args.query,
     limit: args.limit ?? 8,
   });
-
-  const entriesById = new Map<string, RagContextEntry>();
 
   for (const result of results) {
     const current = entriesById.get(result.entryId) ?? {
@@ -479,6 +582,16 @@ export function buildRagContext(args: {
     }
 
     entriesById.set(result.entryId, current);
+  }
+
+  if (entriesById.size === 0) {
+    for (const entry of listEntries(args.projectId).slice(0, 3)) {
+      const detail = getEntryDetail({
+        projectId: args.projectId,
+        entryId: entry.id,
+      });
+      entriesById.set(detail.id, detailToRagEntry(detail));
+    }
   }
 
   const entries = Array.from(entriesById.values());
@@ -854,6 +967,21 @@ function getChangedFiles(db: Database.Database, entryId: string): string[] {
     .all(entryId) as SqlChangedFileRow[];
 
   return rows.map((row) => row.filePath);
+}
+
+function detailToRagEntry(detail: EntryDetail): RagContextEntry {
+  return {
+    entryId: detail.id,
+    name: detail.name,
+    description: detail.description,
+    createdAt: detail.createdAt,
+    changedFiles: detail.changedFiles,
+    chunks: detail.chunks.slice(0, 12).map((chunk) => ({
+      chunkId: chunk.id,
+      kind: chunk.kind,
+      text: chunk.text,
+    })),
+  };
 }
 
 function renderRagContext(query: string, entries: RagContextEntry[]): string {

@@ -10,11 +10,13 @@ export interface RagAnswer {
 export async function askProjectMemory(args: {
   projectId: string;
   question: string;
+  selectedEntryId?: string;
   limit?: number;
 }): Promise<RagAnswer> {
   const context = buildRagContext({
     projectId: args.projectId,
     query: args.question,
+    ...(args.selectedEntryId ? { selectedEntryId: args.selectedEntryId } : {}),
     limit: args.limit ?? 8,
   });
 

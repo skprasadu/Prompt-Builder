@@ -5,7 +5,7 @@ import { extractHtmlBlocks, extractRegexBlocks } from "./blocks";
 import { inspectExcel, extractExcelUnits } from "./excel";
 import { scanDir } from "./fileTree";
 import { readAsciiFiles } from "./ascii";
-import { buildRagContext, createEntry, getEntryDetail, listEntries, searchEntries } from "./entryStore";
+import { buildRagContext, createEntry, deleteEntry, getEntryDetail, listEntries, searchEntries } from "./entryStore";
 import { askProjectMemory } from "./rag/ragService";
 import { getProjectState, saveProjectState } from "./projectStateStore";
 import { createLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
@@ -122,6 +122,12 @@ export function registerCommandHandlers(): void {
             entryId: requiredString(args, "entryId"),
           });
 
+        case "entry:delete":
+          return deleteEntry({
+            projectId: requiredString(args, "projectId"),
+            entryId: requiredString(args, "entryId"),
+          });
+
         case "entry:search": {
           const limit = optionalNumber(args, "limit");
 
@@ -134,20 +140,24 @@ export function registerCommandHandlers(): void {
 
         case "rag:build_context": {
           const limit = optionalNumber(args, "limit");
+          const selectedEntryId = optionalString(args, "selectedEntryId");
 
           return buildRagContext({
             projectId: requiredString(args, "projectId"),
             query: requiredString(args, "query"),
+            ...(selectedEntryId ? { selectedEntryId } : {}),
             ...(limit !== undefined ? { limit } : {}),
           });
         }
 
         case "rag:ask": {
           const limit = optionalNumber(args, "limit");
+          const selectedEntryId = optionalString(args, "selectedEntryId");
 
           return askProjectMemory({
             projectId: requiredString(args, "projectId"),
             question: requiredString(args, "question"),
+            ...(selectedEntryId ? { selectedEntryId } : {}),
             ...(limit !== undefined ? { limit } : {}),
           });
         }
