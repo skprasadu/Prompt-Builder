@@ -1,0 +1,31 @@
+{
+  "provider": "openai",
+  "defaultModelId": "openai-gpt-5.4-mini",
+  "models": [
+    {
+      "id": "openai-gpt-5.4-mini",
+      "label": "OpenAI GPT-5.4 mini",
+      "provider": "openai",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "",
+      "model": "gpt-5.4-mini",
+      "pricing": {
+        "promptUsdPer1K": 0.0,
+        "completionUsdPer1K": 0.0
+      }
+    },
+    {
+      "id": "azure-gpt-5-mini",
+      "label": "Azure GPT-5 mini",
+      "provider": "azure-openai",
+      "endpoint": "https://YOUR_AZURE_OPENAI_RESOURCE.cognitiveservices.azure.com",
+      "apiKey": "",
+      "deployment": "gpt-5-mini",
+      "apiVersion": "2025-04-01-preview",
+      "pricing": {
+        "promptUsdPer1K": 0.0,
+        "completionUsdPer1K": 0.0
+      }
+    }
+  ]
+}

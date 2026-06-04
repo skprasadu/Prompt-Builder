@@ -1,63 +1,115 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+type LlmProvider = "openai" | "azure-openai";
+
+interface LlmModelPricing {
+  promptUsdPer1K?: number;
+  completionUsdPer1K?: number;
+}
+
+interface LlmModelConfig {
+  id: string;
+  label: string;
+  provider?: LlmProvider;
+  endpoint: string;
+  apiKey: string;
+  model?: string;
+  deployment?: string;
+  apiVersion?: string;
+  pricing?: LlmModelPricing;
+}
+
+interface LlmConfigFile {
+  provider?: LlmProvider;
+  defaultModelId: string;
+  models: LlmModelConfig[];
+}
+
 export interface OpenAiSettings {
+  provider: LlmProvider;
   apiKey: string;
   endpoint: string;
   model: string;
+  modelId: string;
+  label: string;
   apiVersion?: string;
+  deployment?: string;
+  pricing?: LlmModelPricing;
 }
 
-let cachedEnv: Record<string, string> | null = null;
+let cachedConfig: LlmConfigFile | null = null;
 
-export async function loadOpenAiSettings(): Promise<OpenAiSettings> {
-  const env = await loadLocalEnv();
-  const apiKey = env.OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+export async function loadOpenAiSettings(modelId?: string): Promise<OpenAiSettings> {
+  const config = await loadLlmConfig();
+  const selectedModelId = modelId ?? config.defaultModelId;
+  const model = config.models.find((candidate) => candidate.id === selectedModelId);
 
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is missing. Add it to .env.local or your shell environment.");
+  if (!model) {
+    throw new Error(`Unknown LLM model id "${selectedModelId}". Check llm.config.json.`);
   }
 
-  const endpoint =
-    env.OPENAI_RESPONSES_ENDPOINT ??
-    process.env.OPENAI_RESPONSES_ENDPOINT ??
-    buildResponsesEndpoint(env.OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL);
+  const provider = model.provider ?? config.provider ?? "openai";
+  const resolvedModel = provider === "azure-openai"
+    ? model.deployment
+    : model.model;
 
-  const model = env.OPENAI_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
-  const apiVersion = env.OPENAI_API_VERSION ?? process.env.OPENAI_API_VERSION;
+  if (!model.apiKey.trim()) {
+    throw new Error(`API key is missing for model "${model.id}". Update llm.config.json.`);
+  }
+
+  if (!model.endpoint.trim()) {
+    throw new Error(`Endpoint is missing for model "${model.id}". Update llm.config.json.`);
+  }
+
+  if (!resolvedModel?.trim()) {
+    throw new Error(`Model/deployment is missing for model "${model.id}". Update llm.config.json.`);
+  }
 
   return {
-    apiKey,
-    endpoint,
-    model,
-    ...(apiVersion ? { apiVersion } : {}),
+    provider,
+    apiKey: model.apiKey,
+    endpoint: model.endpoint,
+    model: resolvedModel,
+    modelId: model.id,
+    label: model.label,
+    ...(model.apiVersion ? { apiVersion: model.apiVersion } : {}),
+    ...(model.deployment ? { deployment: model.deployment } : {}),
+    ...(model.pricing ? { pricing: model.pricing } : {}),
   };
 }
 
-async function loadLocalEnv(): Promise<Record<string, string>> {
-  if (cachedEnv) {
-    return cachedEnv;
+async function loadLlmConfig(): Promise<LlmConfigFile> {
+  if (cachedConfig) {
+    return cachedConfig;
   }
 
-  const envPath = findEnvPath();
+  const configPath = findConfigPath();
+  const raw = await readFile(configPath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
 
-  if (!envPath) {
-    cachedEnv = {};
-    return cachedEnv;
+  if (!isLlmConfigFile(parsed)) {
+    throw new Error(`Invalid LLM config at ${configPath}. Expected { provider?, defaultModelId, models[] }.`);
   }
 
-  const raw = await readFile(envPath, "utf8");
-  cachedEnv = parseEnv(raw);
-
-  return cachedEnv;
+  cachedConfig = parsed;
+  return cachedConfig;
 }
 
-function findEnvPath(): string | null {
+function findConfigPath(): string {
+  const resourcesPath = getResourcesPath();
+  const envConfigPath = process.env.RAPID_PROMPT_LLM_CONFIG?.trim();
+
   const candidates = [
-    path.join(process.cwd(), ".env.local"),
-    path.join(process.cwd(), "..", ".env.local"),
-    path.join(process.cwd(), "..", "..", ".env.local"),
+    ...(envConfigPath ? [envConfigPath] : []),
+    path.join(os.homedir(), ".rapid_prompt", "llm.config.json"),
+    ...(resourcesPath ? [path.join(resourcesPath, "llm.config.json")] : []),
+    path.join(process.cwd(), "llm.config.json"),
+    path.join(process.cwd(), "apps", "desktop", "llm.config.json"),
+    path.join(process.cwd(), "..", "llm.config.json"),
+    path.join(process.cwd(), "..", "..", "apps", "desktop", "llm.config.json"),
   ];
 
   for (const candidate of candidates) {
@@ -66,48 +118,57 @@ function findEnvPath(): string | null {
     }
   }
 
-  return null;
+  throw new Error(
+    [
+      "LLM config not found.",
+      "Looked for llm.config.json in:",
+      ...candidates.map((candidate) => `  - ${candidate}`),
+      "In development, create apps/desktop/llm.config.json.",
+      "In production, package llm.config.json as an electron-builder extraResource.",
+    ].join("\n"),
+  );
 }
 
-function parseEnv(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
+function getResourcesPath(): string | null {
+  const processWithResources = process as NodeJS.Process & {
+    resourcesPath?: string;
+  };
 
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
+  return processWithResources.resourcesPath ?? null;
+}
 
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const separatorIndex = trimmed.indexOf("=");
-
-    if (separatorIndex <= 0) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const value = stripQuotes(trimmed.slice(separatorIndex + 1).trim());
-
-    out[key] = value;
+function isLlmConfigFile(value: unknown): value is LlmConfigFile {
+  if (!isRecord(value)) {
+    return false;
   }
 
-  return out;
+  const models = value.models;
+
+  return (
+    (value.provider === undefined || value.provider === "openai" || value.provider === "azure-openai") &&
+    typeof value.defaultModelId === "string" &&
+    Array.isArray(models) &&
+    models.every(isLlmModelConfig)
+  );
 }
 
-function stripQuotes(value: string): string {
-  if (value.length >= 2) {
-    const first = value.at(0);
-    const last = value.at(-1);
-
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-      return value.slice(1, -1);
-    }
+function isLlmModelConfig(value: unknown): value is LlmModelConfig {
+  if (!isRecord(value)) {
+    return false;
   }
 
-  return value;
+  return (
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    (value.provider === undefined || value.provider === "openai" || value.provider === "azure-openai") &&
+    typeof value.endpoint === "string" &&
+    typeof value.apiKey === "string" &&
+    (value.model === undefined || typeof value.model === "string") &&
+    (value.deployment === undefined || typeof value.deployment === "string") &&
+    (value.apiVersion === undefined || typeof value.apiVersion === "string")
+  );
 }
 
-function buildResponsesEndpoint(baseUrl?: string): string {
-  const base = (baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
-  return `${base}/responses`;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

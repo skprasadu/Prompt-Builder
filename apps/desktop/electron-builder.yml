@@ -26,3 +26,7 @@ mac:
 
 dmg:
   artifactName: Rapid-Prompt-Workbench-${version}-${arch}.${ext}
+
+extraResources:
+  - from: llm.config.json
+    to: llm.config.json
