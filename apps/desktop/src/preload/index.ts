@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("rapidPrompt", {
   invoke: <T>(command: string, args?: Record<string, unknown>): Promise<T> =>
@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld("rapidPrompt", {
 
   writeClipboardText: (value: string): Promise<void> =>
     ipcRenderer.invoke("rapid-prompt:clipboard-write-text", value) as Promise<void>,
+
+  getDroppedFilePaths: (files: File[]): string[] =>
+    files.map((file) => webUtils.getPathForFile(file)).filter((filePath) => filePath.length > 0),
 
   readTextFile: (path: string): Promise<string> =>
     ipcRenderer.invoke("rapid-prompt:read-text-file", path) as Promise<string>,

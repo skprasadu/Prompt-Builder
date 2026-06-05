@@ -14,12 +14,25 @@ export interface SaveDialogOptions {
   filters?: DialogFilter[];
 }
 
-function bridge(): RapidPromptDesktopApi {
-  if (!window.rapidPrompt) {
+interface DesktopBridgeApi {
+  invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+  openDialog: (options: OpenDialogOptions) => Promise<string | string[] | null>;
+  saveDialog: (options: SaveDialogOptions) => Promise<string | null>;
+  writeClipboardText: (value: string) => Promise<void>;
+  getDroppedFilePaths: (files: File[]) => string[];
+  readTextFile: (path: string) => Promise<string>;
+  writeTextFile: (path: string, contents: string) => Promise<void>;
+  setWindowTitle: (title: string) => Promise<void>;
+}
+
+function bridge(): DesktopBridgeApi {
+  const candidate = window.rapidPrompt as DesktopBridgeApi | undefined;
+
+  if (!candidate) {
     throw new Error("Electron desktop bridge is not available.");
   }
 
-  return window.rapidPrompt;
+  return candidate;
 }
 
 export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -36,6 +49,10 @@ export function saveDialog(options: SaveDialogOptions): Promise<string | null> {
 
 export function writeClipboardText(value: string): Promise<void> {
   return bridge().writeClipboardText(value);
+}
+
+export function getDroppedFilePaths(files: File[]): string[] {
+  return bridge().getDroppedFilePaths(files);
 }
 
 export function readTextFile(path: string): Promise<string> {

@@ -8,6 +8,7 @@ export type ArtifactType =
   | "assistant_output"
   | "notes"
   | "selected_files"
+  | "image_attachments"
   | "git_changed_files"
   | "git_changed_files_text"
   | "manifest"
@@ -39,6 +40,7 @@ export interface EntryManifest {
   tags: string[];
   keywords: string[];
   changedFiles: string[];
+  imageAttachments: ImageAttachmentManifest[];
   summary?: string;
 }
 
@@ -53,4 +55,16 @@ export interface ArtifactManifest {
   objectKey?: string;
   uri?: string;
   storageState: ArtifactStorageState;
+}
+
+export interface ImageAttachmentManifest {
+  id: string;
+  fileName: string;
+  extension: string;
+  mimeType: string;
+  sha256: string;
+  sizeBytes: number;
+  localPath?: string;
+  objectKey?: string;
+  uri?: string;
 }

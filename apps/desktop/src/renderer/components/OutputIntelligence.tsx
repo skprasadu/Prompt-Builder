@@ -201,6 +201,7 @@ export default function OutputIntelligence({
       systemPrompt: promptState?.systemPrompt ?? "",
       promptText: promptState?.promptText ?? "",
       selectedPaths: promptState?.selectedPaths ?? [],
+      imageAttachments: promptState?.imageAttachments ?? [],
       includeTree: promptState?.includeTree ?? false,
       includeGitChangedFiles,
       tokenCount: promptState?.tokenCount ?? 0,
@@ -597,6 +598,10 @@ export default function OutputIntelligence({
               />
               <Chip
                 size="small"
+                label={`Images: ${promptState?.imageAttachments.length ?? 0}`}
+              />
+              <Chip
+                size="small"
                 label={`Tokens: ${promptState?.tokenCount ?? 0}`}
               />
             </Stack>
@@ -861,6 +866,54 @@ function EntryDetailPanel({
       </Box>
 
       <Box>
+        <Typography variant="subtitle2">Images used</Typography>
+        {selectedEntry.imageAttachments.length > 0 ? (
+          <Stack direction="row" spacing={0.75} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.75 }}>
+            {selectedEntry.imageAttachments.map((attachment) => (
+              <Chip
+                key={attachment.sha256}
+                size="small"
+                label={`${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+              />
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No images captured.
+          </Typography>
+        )}
+      </Box>
+
+      <Box>
+        <Typography variant="subtitle2">Image insights</Typography>
+        {selectedEntry.imageInsights.length > 0 ? (
+          <Stack spacing={1} sx={{ mt: 0.75 }}>
+            {selectedEntry.imageInsights.map((insight) => (
+              <Paper key={insight.sha256} variant="outlined" sx={{ p: 1 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {insight.fileName}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {insight.summary}
+                </Typography>
+                {insight.technicalTags.length > 0 && (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}>
+                    {insight.technicalTags.slice(0, 10).map((tag) => (
+                      <Chip key={tag} size="small" label={tag} />
+                    ))}
+                  </Stack>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No image insights captured.
+          </Typography>
+        )}
+      </Box>
+
+      <Box>
         <Typography variant="subtitle2">Changed files</Typography>
         {selectedEntry.changedFiles.length > 0 ? (
           <Stack spacing={0.5} sx={{ mt: 0.75 }}>
@@ -1010,6 +1063,20 @@ function MarkdownAnswer({ markdown }: { markdown: string }): JSX.Element {
   );
 }
 
+function formatBytes(sizeBytes: number): string {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+
+  const kib = sizeBytes / 1024;
+
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KB`;
+  }
+
+  return `${(kib / 1024).toFixed(1)} MB`;
+}
+
 function renderEntryContext(entry: EntryDetail): string {
   const lines = [
     `# Entry: ${entry.name}`,
@@ -1017,6 +1084,26 @@ function renderEntryContext(entry: EntryDetail): string {
     `Purpose: ${entry.purpose}`,
     `Description: ${entry.description}`,
     `Created: ${entry.createdAt}`,
+    "",
+    "## Images",
+    ...(entry.imageAttachments.length > 0
+      ? entry.imageAttachments.map(
+          (attachment) =>
+            `- ${attachment.fileName} (${attachment.sha256}) ${attachment.storedPath}`,
+        )
+      : ["No images captured."]),
+    "",
+    "## Image insights",
+    ...(entry.imageInsights.length > 0
+      ? entry.imageInsights.flatMap((insight) => [
+          `### ${insight.fileName}`,
+          insight.summary,
+          insight.technicalTags.length > 0
+            ? `Tags: ${insight.technicalTags.join(", ")}`
+            : "Tags: none",
+          "",
+        ])
+      : ["No image insights captured."]),
     "",
     "## Changed files",
     ...(entry.changedFiles.length > 0 ? entry.changedFiles.map((filePath) => `- ${filePath}`) : ["No changed files captured."]),

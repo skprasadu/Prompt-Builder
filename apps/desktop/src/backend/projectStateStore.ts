@@ -2,12 +2,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { projectDir } from "./projectStore";
+import type { ImageAttachment } from "./attachments/imageAttachmentStore";
 
 export interface LocalProjectState {
   promptText: string;
   includeTree: boolean;
   selectedPaths: string[];
   expandedPaths: string[];
+  imageAttachments: ImageAttachment[];
   folderPanelWidth: number;
   updatedAt: string;
 }
@@ -20,9 +22,10 @@ export async function getProjectState(projectId: string): Promise<LocalProjectSt
   try {
     const raw = await readFile(filePath, "utf8");
     const parsed: unknown = JSON.parse(raw);
+    const normalized = normalizeProjectState(parsed, projectId);
 
-    if (isLocalProjectState(parsed)) {
-      return parsed;
+    if (normalized) {
+      return normalized;
     }
   } catch {
     // Missing or corrupt state falls back to a clean state.
@@ -41,6 +44,7 @@ export async function saveProjectState(args: {
     ...args.state,
     selectedPaths: args.state.selectedPaths ?? current.selectedPaths,
     expandedPaths: args.state.expandedPaths ?? current.expandedPaths,
+    imageAttachments: args.state.imageAttachments ?? current.imageAttachments,
     updatedAt: new Date().toISOString(),
   };
 
@@ -61,26 +65,76 @@ function defaultProjectState(): LocalProjectState {
     includeTree: false,
     selectedPaths: [],
     expandedPaths: [],
+    imageAttachments: [],
     folderPanelWidth: 360,
     updatedAt: new Date().toISOString(),
   };
 }
 
-function isLocalProjectState(value: unknown): value is LocalProjectState {
+function normalizeProjectState(
+  value: unknown,
+  projectId: string,
+): LocalProjectState | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    typeof value.promptText !== "string" ||
+    typeof value.includeTree !== "boolean" ||
+    !isStringArray(value.selectedPaths) ||
+    !isStringArray(value.expandedPaths) ||
+    typeof value.folderPanelWidth !== "number" ||
+    typeof value.updatedAt !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    promptText: value.promptText,
+    includeTree: value.includeTree,
+    selectedPaths: value.selectedPaths,
+    expandedPaths: value.expandedPaths,
+    imageAttachments: parseImageAttachments(value.imageAttachments, projectId),
+    folderPanelWidth: value.folderPanelWidth,
+    updatedAt: value.updatedAt,
+  };
+}
+
+function parseImageAttachments(
+  value: unknown,
+  projectId: string,
+): ImageAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isImageAttachment)
+    .filter((attachment) => attachment.projectId === projectId);
+}
+
+function isImageAttachment(value: unknown): value is ImageAttachment {
   if (!isRecord(value)) {
     return false;
   }
 
   return (
-    typeof value.promptText === "string" &&
-    typeof value.includeTree === "boolean" &&
-    Array.isArray(value.selectedPaths) &&
-    value.selectedPaths.every((item) => typeof item === "string") &&
-    Array.isArray(value.expandedPaths) &&
-    value.expandedPaths.every((item) => typeof item === "string") &&
-    typeof value.folderPanelWidth === "number" &&
-    typeof value.updatedAt === "string"
+    typeof value.id === "string" &&
+    typeof value.projectId === "string" &&
+    typeof value.sourcePath === "string" &&
+    typeof value.storedPath === "string" &&
+    typeof value.fileName === "string" &&
+    typeof value.extension === "string" &&
+    typeof value.mimeType === "string" &&
+    typeof value.sizeBytes === "number" &&
+    typeof value.sha256 === "string" &&
+    typeof value.addedAt === "string"
   );
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,11 +1,44 @@
 export type EntryPurpose = "software_implementation" | "research";
 
+export interface ImageAttachment {
+  id: string;
+  projectId: string;
+  sourcePath: string;
+  storedPath: string;
+  fileName: string;
+  extension: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  addedAt: string;
+}
+
+export type ImageInsightStatus = "completed" | "failed";
+
+export interface ImageInsight {
+  imageId: string;
+  sha256: string;
+  fileName: string;
+  status: ImageInsightStatus;
+  summary: string;
+  visibleText: string[];
+  technicalTags: string[];
+  uiElements: string[];
+  implementationHints: string[];
+  researchConcepts: string[];
+  rawAnswer: string;
+  model?: string;
+  error?: string;
+  generatedAt: string;
+}
+
 export interface PromptWorkflowState {
   projectId: string;
   rootPath: string;
   systemPrompt: string;
   promptText: string;
   selectedPaths: string[];
+  imageAttachments: ImageAttachment[];
   includeTree: boolean;
   tokenCount: number;
   folderPanelWidth: number;
@@ -17,6 +50,7 @@ export interface LocalProjectState {
   includeTree: boolean;
   selectedPaths: string[];
   expandedPaths: string[];
+  imageAttachments: ImageAttachment[];
   folderPanelWidth: number;
   updatedAt: string;
 }
@@ -55,6 +89,8 @@ export interface EntryChunk {
 }
 
 export interface EntryDetail extends EntrySummary {
+  imageAttachments: ImageAttachment[];
+  imageInsights: ImageInsight[];
   userNotes: string;
   summary: string;
   syncStatus: string;
@@ -85,6 +121,7 @@ export interface CreateEntryInput {
   systemPrompt: string;
   promptText: string;
   selectedPaths: string[];
+  imageAttachments: ImageAttachment[];
   includeTree: boolean;
   includeGitChangedFiles: boolean;
   tokenCount: number;

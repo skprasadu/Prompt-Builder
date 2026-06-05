@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -6,6 +6,12 @@ import Database from "better-sqlite3";
 
 import { getGitChangedFilesSnapshot, type GitChangedFilesSnapshot } from "./git/gitService";
 import { getLocalProject, projectDir } from "./projectStore";
+import type { ImageAttachment } from "./attachments/imageAttachmentStore";
+import {
+  analyzeImageAttachments,
+  renderImageInsightsMarkdown,
+  type ImageInsight,
+} from "./llm/imageInsightService";
 
 export type EntryPurpose = "software_implementation" | "research";
 
@@ -19,6 +25,7 @@ export interface CreateEntryArgs {
   systemPrompt: string;
   promptText: string;
   selectedPaths: string[];
+  imageAttachments: ImageAttachment[];
   includeTree: boolean;
   includeGitChangedFiles: boolean;
   tokenCount: number;
@@ -58,6 +65,8 @@ export interface EntryChunk {
 }
 
 export interface EntryDetail extends EntrySummary {
+  imageAttachments: ImageAttachment[];
+  imageInsights: ImageInsight[];
   userNotes: string;
   summary: string;
   syncStatus: string;
@@ -188,6 +197,10 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
   const gitSnapshot = args.includeGitChangedFiles
     ? await getGitChangedFilesSnapshot(project.rootPath)
     : null;
+  const imageInsights = args.imageAttachments.length > 0
+    ? await analyzeImageAttachments(args.imageAttachments)
+    : [];
+  const imageInsightsMarkdown = renderImageInsightsMarkdown(imageInsights);
 
   const artifacts: ArtifactRecord[] = [];
   artifacts.push(await writeArtifact(entryId, captureDir, "system_prompt", "system-prompt.md", args.systemPrompt));
@@ -203,6 +216,36 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
       `${JSON.stringify(args.selectedPaths, null, 2)}\n`,
     ),
   );
+  artifacts.push(
+    await writeArtifact(
+      entryId,
+      captureDir,
+      "image_attachments",
+      "image-attachments.json",
+      `${JSON.stringify(args.imageAttachments, null, 2)}\n`,
+    ),
+  );
+
+  if (imageInsights.length > 0) {
+    artifacts.push(
+      await writeArtifact(
+        entryId,
+        captureDir,
+        "image_insights",
+        "image-insights.json",
+        `${JSON.stringify(imageInsights, null, 2)}\n`,
+      ),
+    );
+    artifacts.push(
+      await writeArtifact(
+        entryId,
+        captureDir,
+        "image_insights_markdown",
+        "image-insights.md",
+        imageInsightsMarkdown,
+      ),
+    );
+  }
 
   if (gitSnapshot) {
     artifacts.push(
@@ -231,6 +274,8 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
     aiOutput: args.aiOutput,
     notes: args.notes,
     selectedPaths: args.selectedPaths,
+    imageAttachments: args.imageAttachments,
+    imageInsightsMarkdown,
     gitSnapshot,
   });
 
@@ -258,6 +303,23 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
     includeGitChangedFiles: args.includeGitChangedFiles,
     tokenCount: args.tokenCount,
     changedFiles,
+    imageAttachments: args.imageAttachments.map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.fileName,
+      extension: attachment.extension,
+      mimeType: attachment.mimeType,
+      sha256: attachment.sha256,
+      sizeBytes: attachment.sizeBytes,
+      localPath: attachment.storedPath,
+    })),
+    imageInsights: imageInsights.map((insight) => ({
+      imageId: insight.imageId,
+      fileName: insight.fileName,
+      status: insight.status,
+      summary: insight.summary,
+      technicalTags: insight.technicalTags,
+      generatedAt: insight.generatedAt,
+    })),
     artifacts: artifacts.map((artifact) => ({
       id: artifact.id,
       type: artifact.type,
@@ -422,6 +484,8 @@ export function getEntryDetail(args: {
     syncStatus: row.syncStatus,
     captureDir: row.captureDir,
     changedFiles: getChangedFiles(db, row.id),
+    imageAttachments: readEntryImageAttachments(row.captureDir, row.projectId),
+    imageInsights: readEntryImageInsights(row.captureDir, row.projectId),
     artifacts: artifacts.map((artifact) => ({
       id: artifact.id,
       entryId: artifact.entryId,
@@ -966,6 +1030,8 @@ function buildChunks(
     aiOutput: string;
     notes: string;
     selectedPaths: string[];
+    imageAttachments: ImageAttachment[];
+    imageInsightsMarkdown: string;
     gitSnapshot: GitChangedFilesSnapshot | null;
   },
 ): ChunkRecord[] {
@@ -976,6 +1042,22 @@ function buildChunks(
   addTextChunks(chunks, entryId, "assistant_output", content.aiOutput, artifactId(artifacts, "assistant_output"));
   addTextChunks(chunks, entryId, "notes", content.notes, artifactId(artifacts, "notes"));
   addTextChunks(chunks, entryId, "selected_files", content.selectedPaths.join("\n"), artifactId(artifacts, "selected_files"));
+  addTextChunks(
+    chunks,
+    entryId,
+    "image_attachments",
+    content.imageAttachments
+      .map((attachment) => `${attachment.fileName}\t${attachment.sha256}\t${attachment.storedPath}`)
+      .join("\n"),
+    artifactId(artifacts, "image_attachments"),
+  );
+  addTextChunks(
+    chunks,
+    entryId,
+    "image_insights",
+    content.imageInsightsMarkdown,
+    artifactId(artifacts, "image_insights_markdown"),
+  );
 
   if (content.gitSnapshot) {
     addTextChunks(
@@ -1021,6 +1103,99 @@ function addTextChunks(
       artifactId: artifactIdValue,
     });
   }
+}
+
+function readEntryImageAttachments(
+  captureDir: string,
+  projectId: string,
+): ImageAttachment[] {
+  const filePath = path.join(captureDir, "image-attachments.json");
+
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Invalid image attachment manifest: ${filePath}`);
+  }
+
+  return parsed.filter(isImageAttachment).filter((attachment) => attachment.projectId === projectId);
+}
+
+function isImageAttachment(value: unknown): value is ImageAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    typeof record.id === "string" &&
+    typeof record.projectId === "string" &&
+    typeof record.sourcePath === "string" &&
+    typeof record.storedPath === "string" &&
+    typeof record.fileName === "string" &&
+    typeof record.extension === "string" &&
+    typeof record.mimeType === "string" &&
+    typeof record.sizeBytes === "number" &&
+    typeof record.sha256 === "string" &&
+    typeof record.addedAt === "string"
+  );
+}
+
+function readEntryImageInsights(
+  captureDir: string,
+  projectId: string,
+): ImageInsight[] {
+  const filePath = path.join(captureDir, "image-insights.json");
+
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Invalid image insight manifest: ${filePath}`);
+  }
+
+  return parsed.filter(isImageInsight).filter((insight) =>
+    readEntryImageAttachments(captureDir, projectId).some(
+      (attachment) => attachment.sha256 === insight.sha256,
+    ),
+  );
+}
+
+function isImageInsight(value: unknown): value is ImageInsight {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    typeof record.imageId === "string" &&
+    typeof record.sha256 === "string" &&
+    typeof record.fileName === "string" &&
+    (record.status === "completed" || record.status === "failed") &&
+    typeof record.summary === "string" &&
+    Array.isArray(record.visibleText) &&
+    record.visibleText.every((item) => typeof item === "string") &&
+    Array.isArray(record.technicalTags) &&
+    record.technicalTags.every((item) => typeof item === "string") &&
+    Array.isArray(record.uiElements) &&
+    record.uiElements.every((item) => typeof item === "string") &&
+    Array.isArray(record.implementationHints) &&
+    record.implementationHints.every((item) => typeof item === "string") &&
+    Array.isArray(record.researchConcepts) &&
+    record.researchConcepts.every((item) => typeof item === "string") &&
+    typeof record.rawAnswer === "string" &&
+    (record.model === undefined || typeof record.model === "string") &&
+    (record.error === undefined || typeof record.error === "string") &&
+    typeof record.generatedAt === "string"
+  );
 }
 
 function getChangedFiles(db: Database.Database, entryId: string): string[] {

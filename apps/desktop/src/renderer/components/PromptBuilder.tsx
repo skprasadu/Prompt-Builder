@@ -1,7 +1,8 @@
 // src/App.tsx
-import { useEffect, useRef, useState, type JSX } from "react";
+import { memo, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type JSX } from "react";
 import {
   getDesktopWindow as getCurrentWindow,
+  getDroppedFilePaths,
   invoke,
   openDialog as open,
   writeClipboardText as writeText,
@@ -9,7 +10,7 @@ import {
 
 import type { Node, FileValue } from "../types/fs";
 import type { LocalProject } from "../types/project";
-import type { LocalProjectState, PromptWorkflowState } from "../types/capture";
+import type { ImageAttachment, LocalProjectState, PromptWorkflowState } from "../types/capture";
 import { isDirNode } from "../types/fs";
 import { formatOutput, type OutputOptions } from "../lib/formatters";
 import { countTokens } from "../lib/tokenize";
@@ -59,6 +60,8 @@ import {
 } from "@mui/material";
 
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
@@ -73,6 +76,14 @@ const FOLDER_PANEL_DEFAULT_WIDTH = 360;
 const FOLDER_PANEL_MIN_WIDTH = 280;
 const FOLDER_PANEL_MAX_WIDTH = 640;
 const FOLDER_PANEL_SPLITTER_WIDTH = 8;
+
+const MemoTreeView = memo(
+  TreeView,
+  (previous, next) =>
+    previous.node === next.node &&
+    previous.expanded === next.expanded &&
+    previous.selected === next.selected,
+);
 
 export interface PromptBuilderProps {
   project?: LocalProject | null;
@@ -98,6 +109,11 @@ export default function PromptBuilder({
 
   // Folder-only toggle
   const [includeTree, setIncludeTree] = useState<boolean>(false);
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [imageArchive, setImageArchive] = useState<ImageAttachment[]>([]);
+  const [imageArchiveOpen, setImageArchiveOpen] = useState<boolean>(false);
+  const [archiveDeleteTarget, setArchiveDeleteTarget] = useState<ImageAttachment | null>(null);
+  const [archiveClearConfirmOpen, setArchiveClearConfirmOpen] = useState<boolean>(false);
 
   // Units (Excel/Block/API)
   const [unitSource, setUnitSource] = useState<string>(""); // absolute path
@@ -138,6 +154,8 @@ export default function PromptBuilder({
   const debounceRef = useRef<number | null>(null);
   const systemPromptSaveRef = useRef<number | null>(null); // NEW
   const projectStateSaveRef = useRef<number | null>(null);
+  const workspaceStateEmitRef = useRef<number | null>(null);
+  const projectTreeLoadRef = useRef<number>(0);
   const projectStateLoadedRef = useRef<boolean>(false);
   const [selectedDialogOpen, setSelectedDialogOpen] = useState<boolean>(false);
 
@@ -184,17 +202,61 @@ export default function PromptBuilder({
   }, [project?.id, systemPrompt]);
 
   useEffect(() => {
-    if (!project?.rootPath) {
+    if (!project?.id || !project.rootPath) {
+      projectTreeLoadRef.current += 1;
+      projectStateLoadedRef.current = false;
+      setRootPath("");
+      setTree(null);
+      setExpanded(new Set());
+      setSelected(new Set());
+      setImageAttachments([]);
+      setImageArchive([]);
+      setImageArchiveOpen(false);
+      setArchiveDeleteTarget(null);
+      setArchiveClearConfirmOpen(false);
       return;
     }
 
+    const projectId = project.id;
+    const projectRootPath = project.rootPath;
+    const loadId = projectTreeLoadRef.current + 1;
+    projectTreeLoadRef.current = loadId;
     projectStateLoadedRef.current = false;
+
+    // Clear project-scoped renderer state before async project state/tree loading.
+    // This prevents previous project images/files from flashing or leaking into the next project.
+    setError(null);
+    setRootPath(projectRootPath);
+    setTree(null);
+    setExpanded(new Set());
+    setSelected(new Set());
+    setImageAttachments([]);
+    setImageArchive([]);
+    setImageArchiveOpen(false);
+    setArchiveDeleteTarget(null);
+    setArchiveClearConfirmOpen(false);
+    setText("");
+    setIncludeTree(false);
 
     void (async () => {
       try {
         const savedState = await invoke<LocalProjectState>("project:get_state", {
-          projectId: project.id,
+          projectId,
         });
+
+        if (projectTreeLoadRef.current !== loadId) {
+          return;
+        }
+
+        const archive = await invoke<ImageAttachment[]>("attachments:list_images", {
+          projectId,
+        });
+
+        if (projectTreeLoadRef.current !== loadId) {
+          return;
+        }
+
+        setImageArchive(archive);
 
         setText(savedState.promptText ?? "");
         setIncludeTree(savedState.includeTree ?? false);
@@ -204,33 +266,49 @@ export default function PromptBuilder({
             Math.max(FOLDER_PANEL_MIN_WIDTH, savedState.folderPanelWidth ?? FOLDER_PANEL_DEFAULT_WIDTH),
           ),
         );
+        setImageAttachments(() => {
+          const archiveHashes = new Set(archive.map((attachment) => attachment.sha256));
 
-        setRootPath(project.rootPath);
-        const loadedTree = await loadTree(project.rootPath, false);
+          return (savedState.imageAttachments ?? []).filter(
+            (attachment) => attachment.projectId === projectId && archiveHashes.has(attachment.sha256),
+          );
+        });
+
+        const loadedTree = await loadTree(projectRootPath, false, loadId);
+
+        if (projectTreeLoadRef.current !== loadId) {
+          return;
+        }
 
         if (loadedTree) {
           const reachable = collectFilePaths(loadedTree);
           const restoredSelected = (savedState.selectedPaths ?? [])
-            .map((relativePath) => toAbsolute(project.rootPath, relativePath))
+            .map((relativePath) => toAbsolute(projectRootPath, relativePath))
             .filter((absolutePath) => reachable.has(absolutePath));
 
           setSelected(new Set(restoredSelected));
 
-          setExpanded((prev) => {
-            const next = new Set(prev);
+          setExpanded(() => {
+            const next = new Set<string>();
             next.add(loadedTree.path);
             (savedState.expandedPaths ?? [])
-              .map((relativePath) => toAbsolute(project.rootPath, relativePath))
+              .map((relativePath) => toAbsolute(projectRootPath, relativePath))
               .forEach((absolutePath) => next.add(absolutePath));
             return next;
           });
         }
       } catch (err: unknown) {
+        if (projectTreeLoadRef.current !== loadId) {
+          return;
+        }
+
         console.warn("project:get_state failed:", err);
-        setRootPath(project.rootPath);
-        void loadTree(project.rootPath, false);
+        setRootPath(projectRootPath);
+        void loadTree(projectRootPath, false, loadId);
       } finally {
-        projectStateLoadedRef.current = true;
+        if (projectTreeLoadRef.current === loadId) {
+          projectStateLoadedRef.current = true;
+        }
       }
     })();
   }, [project?.id, project?.rootPath]);
@@ -252,6 +330,7 @@ export default function PromptBuilder({
           includeTree,
           selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
           expandedPaths: Array.from(expanded).map((absolutePath) => toRelative(rootPath, absolutePath)),
+          imageAttachments,
           folderPanelWidth,
         },
       }).catch((err: unknown) => {
@@ -264,26 +343,40 @@ export default function PromptBuilder({
         window.clearTimeout(projectStateSaveRef.current);
       }
     };
-  }, [expanded, folderPanelWidth, includeTree, project?.id, rootPath, selected, text]);
+  }, [expanded, folderPanelWidth, imageAttachments, includeTree, project?.id, rootPath, selected, text]);
 
   useEffect(() => {
     if (!project?.id) {
       return;
     }
 
-    onWorkspaceStateChange?.({
-      projectId: project.id,
-      rootPath,
-      systemPrompt,
-      promptText: text,
-      selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
-      includeTree,
-      tokenCount,
-      folderPanelWidth,
-      updatedAt: new Date().toISOString(),
-    });
+    if (workspaceStateEmitRef.current) {
+      window.clearTimeout(workspaceStateEmitRef.current);
+    }
+
+    workspaceStateEmitRef.current = window.setTimeout(() => {
+      onWorkspaceStateChange?.({
+        projectId: project.id,
+        rootPath,
+        systemPrompt,
+        promptText: text,
+        selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
+        imageAttachments,
+        includeTree,
+        tokenCount,
+        folderPanelWidth,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 250);
+
+    return () => {
+      if (workspaceStateEmitRef.current) {
+        window.clearTimeout(workspaceStateEmitRef.current);
+      }
+    };
   }, [
     folderPanelWidth,
+    imageAttachments,
     includeTree,
     onWorkspaceStateChange,
     project?.id,
@@ -313,12 +406,21 @@ export default function PromptBuilder({
 
   /* ---------------- Folder: pick folder, load tree ---------------- */
 
-  async function loadTree(path: string, preserveSelected: boolean): Promise<Node | null> {
+  async function loadTree(
+    path: string,
+    preserveSelected: boolean,
+    loadId = projectTreeLoadRef.current,
+  ): Promise<Node | null> {
     setError(null);
     setBusy(true);
     try {
       const prevSelected = new Set(selected);
       const raw = await invoke<Node>("scan_dir", { path });
+
+      if (loadId !== projectTreeLoadRef.current) {
+        return null;
+      }
+
       const normalized = normalizeRootFromRust(raw);
       setTree(normalized);
 
@@ -338,10 +440,14 @@ export default function PromptBuilder({
 
       return normalized;
     } catch (e: unknown) {
-      setError(toErrorMessage(e));
+      if (loadId === projectTreeLoadRef.current) {
+        setError(toErrorMessage(e));
+      }
       return null;
     } finally {
-      setBusy(false);
+      if (loadId === projectTreeLoadRef.current) {
+        setBusy(false);
+      }
     }
   }
 
@@ -673,6 +779,146 @@ export default function PromptBuilder({
     setUnitIndex(0);
   }
 
+  async function addDroppedImageFiles(files: File[]): Promise<void> {
+    if (!project?.id) {
+      setError("Project is required before adding image attachments.");
+      return;
+    }
+
+    const paths = getDroppedFilePaths(files);
+
+    if (paths.length === 0) {
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      const added = await invoke<ImageAttachment[]>("attachments:add_images", {
+        projectId: project.id,
+        paths,
+      });
+
+      setImageArchive((current) => mergeImageAttachments(current, added));
+      setImageAttachments((current) => mergeImageAttachments(current, added));
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyImageAttachments(): Promise<void> {
+    const paths = imageAttachments.map((attachment) => attachment.storedPath);
+
+    if (paths.length === 0) {
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      await invoke<{ copied: number }>("attachments:copy_images_to_clipboard", {
+        paths,
+      });
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function removeImageAttachment(sha256: string): void {
+    setImageAttachments((current) =>
+      current.filter((attachment) => attachment.sha256 !== sha256),
+    );
+  }
+
+  function toggleImageAttachmentInBasket(attachment: ImageAttachment): void {
+    setImageAttachments((current) => {
+      if (current.some((item) => item.sha256 === attachment.sha256)) {
+        return current.filter((item) => item.sha256 !== attachment.sha256);
+      }
+
+      return mergeImageAttachments(current, [attachment]);
+    });
+  }
+
+  async function deleteImageFromArchive(attachment: ImageAttachment): Promise<void> {
+    if (!project?.id) {
+      setError("Project is required before deleting an image.");
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      await invoke("attachments:delete_image", {
+        projectId: project.id,
+        sha256: attachment.sha256,
+      });
+
+      setImageArchive((current) =>
+        current.filter((item) => item.sha256 !== attachment.sha256),
+      );
+      setImageAttachments((current) =>
+        current.filter((item) => item.sha256 !== attachment.sha256),
+      );
+      setArchiveDeleteTarget(null);
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearImageArchive(): Promise<void> {
+    if (!project?.id) {
+      setError("Project is required before clearing the image archive.");
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      await invoke("attachments:clear_images", {
+        projectId: project.id,
+      });
+
+      setImageArchive([]);
+      setImageAttachments([]);
+      setArchiveClearConfirmOpen(false);
+      setImageArchiveOpen(false);
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function mergeImageAttachments(
+    current: ImageAttachment[],
+    added: ImageAttachment[],
+  ): ImageAttachment[] {
+    const byHash = new Map<string, ImageAttachment>();
+
+    for (const attachment of current) {
+      byHash.set(attachment.sha256, attachment);
+    }
+
+    for (const attachment of added) {
+      byHash.set(attachment.sha256, attachment);
+    }
+
+    return Array.from(byHash.values()).sort((left, right) =>
+      left.fileName.localeCompare(right.fileName),
+    );
+  }
+
   /* ---------------- Copy & tokens ---------------- */
 
   function outputWithFolderSelections(files: FileValue[], opts: OutputOptions): string {
@@ -932,7 +1178,7 @@ export default function PromptBuilder({
             </Typography>
           )}
           {tree && (
-            <TreeView
+            <MemoTreeView
               node={tree}
               expanded={expanded}
               selected={selected}
@@ -961,7 +1207,7 @@ export default function PromptBuilder({
           // folder actions + system prompt + main textarea + mode panel + footer
           gridTemplateRows:
             mode === "folder"
-              ? "auto auto minmax(0,1fr) auto auto"
+              ? "auto auto minmax(0,1fr) auto auto auto"
               : "auto minmax(0,1fr) auto auto auto",
           gap: 1.25,
           minWidth: 0,
@@ -998,6 +1244,19 @@ export default function PromptBuilder({
                     color="primary"
                   >
                     <ContentCopyIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Tooltip title="Copy image attachments" arrow>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label="Copy image attachments"
+                    disabled={busy || imageAttachments.length === 0}
+                    onClick={() => void copyImageAttachments()}
+                  >
+                    <ImageOutlinedIcon fontSize="small" />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -1093,6 +1352,85 @@ export default function PromptBuilder({
             }}
           />
         </Box>
+
+        <ImageAttachmentPanel
+          basket={imageAttachments}
+          archiveCount={imageArchive.length}
+          disabled={busy}
+          onClearArchive={() => setArchiveClearConfirmOpen(true)}
+          onDropFiles={addDroppedImageFiles}
+          onOpenArchive={() => setImageArchiveOpen(true)}
+          onRemove={removeImageAttachment}
+        />
+
+        <ImageArchiveDialog
+          open={imageArchiveOpen}
+          archive={imageArchive}
+          basket={imageAttachments}
+          onClose={() => setImageArchiveOpen(false)}
+          onRequestDelete={setArchiveDeleteTarget}
+          onToggle={toggleImageAttachmentInBasket}
+        />
+
+        <Dialog
+          open={archiveDeleteTarget !== null}
+          onClose={() => setArchiveDeleteTarget(null)}
+          fullWidth
+          maxWidth="xs"
+        >
+          <DialogTitle>Delete image?</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              {archiveDeleteTarget
+                ? `Delete "${archiveDeleteTarget.fileName}" from the project image archive?`
+                : "Delete this image from the project image archive?"}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setArchiveDeleteTarget(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              color="error"
+              variant="contained"
+              disabled={busy || !archiveDeleteTarget}
+              onClick={() => {
+                if (archiveDeleteTarget) {
+                  void deleteImageFromArchive(archiveDeleteTarget);
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={archiveClearConfirmOpen}
+          onClose={() => setArchiveClearConfirmOpen(false)}
+          fullWidth
+          maxWidth="xs"
+        >
+          <DialogTitle>Clear image archive?</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              Delete all images from this project's image archive and clear the prompt basket?
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setArchiveClearConfirmOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              color="error"
+              variant="contained"
+              disabled={busy || imageArchive.length === 0}
+              onClick={() => void clearImageArchive()}
+            >
+              Clear
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Mode panels */}
         {mode === "excel" && (
@@ -1532,3 +1870,171 @@ function LinearBusy() {
     </Box>
   );
 }
+
+interface ImageAttachmentPanelProps {
+  basket: ImageAttachment[];
+  archiveCount: number;
+  disabled: boolean;
+  onClearArchive: () => void;
+  onDropFiles: (files: File[]) => Promise<void>;
+  onOpenArchive: () => void;
+  onRemove: (sha256: string) => void;
+}
+
+function ImageAttachmentPanel({
+  basket,
+  archiveCount,
+  disabled,
+  onClearArchive,
+  onDropFiles,
+  onOpenArchive,
+  onRemove,
+}: ImageAttachmentPanelProps): JSX.Element {
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>): void {
+    event.preventDefault();
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLDivElement>): void {
+    event.preventDefault();
+
+    if (disabled) {
+      return;
+    }
+
+    void onDropFiles(Array.from(event.dataTransfer.files));
+  }
+
+  return (
+    <Box
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      sx={{
+        p: 1,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.paper",
+      }}
+    >
+      <Stack spacing={0.75}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="subtitle2" sx={{ flex: 1 }}>
+            Images
+          </Typography>
+
+          <Tooltip title="Open image archive" arrow>
+            <IconButton
+              size="small"
+              aria-label="Open image archive"
+              disabled={disabled || archiveCount === 0}
+              onClick={onOpenArchive}
+            >
+              <ImageOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
+          <Tooltip title="Clear image archive" arrow>
+            <IconButton
+              size="small"
+              aria-label="Clear image archive"
+              disabled={disabled || archiveCount === 0}
+              onClick={onClearArchive}
+            >
+              <DeleteOutlineIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
+          <Chip size="small" label={`Archive: ${archiveCount}`} />
+        </Stack>
+
+        {basket.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            Drop images here.
+          </Typography>
+        ) : (
+          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
+            {basket.map((attachment) => (
+              <Chip
+                key={attachment.sha256}
+                size="small"
+                label={`${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+                onDelete={() => onRemove(attachment.sha256)}
+                deleteIcon={<DeleteOutlineIcon />}
+              />
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    </Box>
+  );
+}
+
+interface ImageArchiveDialogProps {
+  open: boolean;
+  archive: ImageAttachment[];
+  basket: ImageAttachment[];
+  onClose: () => void;
+  onRequestDelete: (attachment: ImageAttachment) => void;
+  onToggle: (attachment: ImageAttachment) => void;
+}
+
+function ImageArchiveDialog({
+  open,
+  archive,
+  basket,
+  onClose,
+  onRequestDelete,
+  onToggle,
+}: ImageArchiveDialogProps): JSX.Element {
+  const basketHashes = new Set(basket.map((attachment) => attachment.sha256));
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Image archive</DialogTitle>
+      <DialogContent dividers>
+        {archive.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            No images.
+          </Typography>
+        ) : (
+          <Stack spacing={0.75} sx={{ maxHeight: 420, overflow: "auto" }}>
+            {archive.map((attachment) => {
+              const inBasket = basketHashes.has(attachment.sha256);
+
+              return (
+                <Chip
+                  key={attachment.sha256}
+                  label={`${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+                  variant={inBasket ? "filled" : "outlined"}
+                  color={inBasket ? "primary" : "default"}
+                  onClick={() => onToggle(attachment)}
+                  onDelete={() => onRequestDelete(attachment)}
+                  deleteIcon={<DeleteOutlineIcon />}
+                  title={attachment.storedPath}
+                />
+              );
+            })}
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function formatBytes(sizeBytes: number): string {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+
+  const kib = sizeBytes / 1024;
+
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KB`;
+  }
+
+  return `${(kib / 1024).toFixed(1)} MB`;
+}
+

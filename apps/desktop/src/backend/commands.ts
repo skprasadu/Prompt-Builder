@@ -10,6 +10,7 @@ import { generateInsight } from "./rag/ragService";
 import { getProjectState, saveProjectState } from "./projectStateStore";
 import { createLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
 import { loadSystemPrompt, saveSystemPrompt } from "./systemPrompt";
+import { addImageAttachments, clearImageAttachments, copyImageAttachmentsToClipboard, deleteImageAttachment, listImageAttachments, type ImageAttachment } from "./attachments/imageAttachmentStore";
 
 type CommandArgs = Record<string, unknown>;
 type EntryPurpose = "software_implementation" | "research";
@@ -99,6 +100,27 @@ export function registerCommandHandlers(): void {
             state: requiredObject(args, "state"),
           });
 
+        case "attachments:add_images":
+          return addImageAttachments({
+            projectId: requiredString(args, "projectId"),
+            paths: requiredStringArray(args, "paths"),
+          });
+
+        case "attachments:list_images":
+          return listImageAttachments(requiredString(args, "projectId"));
+
+        case "attachments:delete_image":
+          return deleteImageAttachment({
+            projectId: requiredString(args, "projectId"),
+            sha256: requiredString(args, "sha256"),
+          });
+
+        case "attachments:clear_images":
+          return clearImageAttachments(requiredString(args, "projectId"));
+
+        case "attachments:copy_images_to_clipboard":
+          return copyImageAttachmentsToClipboard(requiredStringArray(args, "paths"));
+
         case "entry:create":
           return createEntry({
             projectId: requiredString(args, "projectId"),
@@ -110,6 +132,7 @@ export function registerCommandHandlers(): void {
             systemPrompt: optionalString(args, "systemPrompt") ?? "",
             promptText: optionalString(args, "promptText") ?? "",
             selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
+            imageAttachments: optionalImageAttachments(args, "imageAttachments") ?? [],
             includeTree: optionalBoolean(args, "includeTree") ?? false,
             includeGitChangedFiles: optionalBoolean(args, "includeGitChangedFiles") ?? false,
             tokenCount: optionalNumber(args, "tokenCount") ?? 0,
@@ -258,6 +281,40 @@ function optionalBoolean(args: CommandArgs, key: string): boolean | undefined {
   return value;
 }
 
+function optionalImageAttachments(
+  args: CommandArgs,
+  key: string,
+): ImageAttachment[] | undefined {
+  const value = args[key];
+
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ImageAttachment[] argument: ${key}`);
+  }
+
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`Expected ImageAttachment at ${key}[${index}]`);
+    }
+
+    return {
+      id: requiredRecordString(item, "id"),
+      projectId: requiredRecordString(item, "projectId"),
+      sourcePath: requiredRecordString(item, "sourcePath"),
+      storedPath: requiredRecordString(item, "storedPath"),
+      fileName: requiredRecordString(item, "fileName"),
+      extension: requiredRecordString(item, "extension"),
+      mimeType: requiredRecordString(item, "mimeType"),
+      sizeBytes: requiredRecordNumber(item, "sizeBytes"),
+      sha256: requiredRecordString(item, "sha256"),
+      addedAt: requiredRecordString(item, "addedAt"),
+    };
+  });
+}
+
 function optionalStringRecord(
   args: CommandArgs,
   key: string,
@@ -293,4 +350,28 @@ function parseEntryPurpose(value: string | undefined): EntryPurpose {
   }
 
   throw new Error(`Invalid entry purpose: ${value}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredRecordString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+
+  if (typeof value !== "string") {
+    throw new Error(`Missing required string property: ${key}`);
+  }
+
+  return value;
+}
+
+function requiredRecordNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+
+  if (typeof value !== "number") {
+    throw new Error(`Missing required number property: ${key}`);
+  }
+
+  return value;
 }
