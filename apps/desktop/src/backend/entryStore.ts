@@ -8,6 +8,12 @@ import { getGitChangedFilesSnapshot, type GitChangedFilesSnapshot } from "./git/
 import { getLocalProject, projectDir } from "./projectStore";
 import type { ImageAttachment } from "./attachments/imageAttachmentStore";
 import {
+  extractPdfTextForAttachments,
+  renderPdfTextExtractionsMarkdown,
+  type PdfAttachment,
+  type PdfTextExtraction,
+} from "./attachments/pdfAttachmentStore";
+import {
   analyzeImageAttachments,
   renderImageInsightsMarkdown,
   type ImageInsight,
@@ -26,6 +32,7 @@ export interface CreateEntryArgs {
   promptText: string;
   selectedPaths: string[];
   imageAttachments: ImageAttachment[];
+  pdfAttachments: PdfAttachment[];
   includeTree: boolean;
   includeGitChangedFiles: boolean;
   tokenCount: number;
@@ -67,6 +74,8 @@ export interface EntryChunk {
 export interface EntryDetail extends EntrySummary {
   imageAttachments: ImageAttachment[];
   imageInsights: ImageInsight[];
+  pdfAttachments: PdfAttachment[];
+  pdfTextExtractions: PdfTextExtraction[];
   userNotes: string;
   summary: string;
   syncStatus: string;
@@ -164,16 +173,13 @@ interface SqlChunkRow {
   tokenCount: number | null;
 }
 
-interface SqlSearchRow {
-  entryId: string;
-  chunkId: string;
-  entryPurpose: EntryPurpose | null;
-  entryName: string;
-  entryDescription: string | null;
-  chunkKind: string;
-  chunkText: string;
+interface SqlEntrySearchRow {
+  id: string;
+  projectId: string;
+  purpose: EntryPurpose | null;
+  name: string;
+  description: string | null;
   createdAt: string;
-  score: number;
 }
 
 interface SqlChangedFileRow {
@@ -201,6 +207,10 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
     ? await analyzeImageAttachments(args.imageAttachments)
     : [];
   const imageInsightsMarkdown = renderImageInsightsMarkdown(imageInsights);
+  const pdfTextExtractions = args.pdfAttachments.length > 0
+    ? await extractPdfTextForAttachments(args.pdfAttachments)
+    : [];
+  const pdfTextMarkdown = renderPdfTextExtractionsMarkdown(pdfTextExtractions);
 
   const artifacts: ArtifactRecord[] = [];
   artifacts.push(await writeArtifact(entryId, captureDir, "system_prompt", "system-prompt.md", args.systemPrompt));
@@ -225,6 +235,36 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
       `${JSON.stringify(args.imageAttachments, null, 2)}\n`,
     ),
   );
+  artifacts.push(
+    await writeArtifact(
+      entryId,
+      captureDir,
+      "pdf_attachments",
+      "pdf-attachments.json",
+      `${JSON.stringify(args.pdfAttachments, null, 2)}\n`,
+    ),
+  );
+
+  if (pdfTextExtractions.length > 0) {
+    artifacts.push(
+      await writeArtifact(
+        entryId,
+        captureDir,
+        "pdf_text",
+        "pdf-text.json",
+        `${JSON.stringify(pdfTextExtractions, null, 2)}\n`,
+      ),
+    );
+    artifacts.push(
+      await writeArtifact(
+        entryId,
+        captureDir,
+        "pdf_text_markdown",
+        "pdf-text.md",
+        pdfTextMarkdown,
+      ),
+    );
+  }
 
   if (imageInsights.length > 0) {
     artifacts.push(
@@ -276,6 +316,8 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
     selectedPaths: args.selectedPaths,
     imageAttachments: args.imageAttachments,
     imageInsightsMarkdown,
+    pdfAttachments: args.pdfAttachments,
+    pdfTextMarkdown,
     gitSnapshot,
   });
 
@@ -319,6 +361,24 @@ export async function createEntry(args: CreateEntryArgs): Promise<EntrySummary> 
       summary: insight.summary,
       technicalTags: insight.technicalTags,
       generatedAt: insight.generatedAt,
+    })),
+    pdfAttachments: args.pdfAttachments.map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.fileName,
+      extension: attachment.extension,
+      mimeType: attachment.mimeType,
+      sha256: attachment.sha256,
+      sizeBytes: attachment.sizeBytes,
+      localPath: attachment.storedPath,
+    })),
+    pdfTextExtractions: pdfTextExtractions.map((extraction) => ({
+      pdfId: extraction.pdfId,
+      fileName: extraction.fileName,
+      status: extraction.status,
+      title: extraction.title,
+      pageCount: extraction.pageCount,
+      textLength: extraction.text.length,
+      extractedAt: extraction.extractedAt,
     })),
     artifacts: artifacts.map((artifact) => ({
       id: artifact.id,
@@ -486,6 +546,8 @@ export function getEntryDetail(args: {
     changedFiles: getChangedFiles(db, row.id),
     imageAttachments: readEntryImageAttachments(row.captureDir, row.projectId),
     imageInsights: readEntryImageInsights(row.captureDir, row.projectId),
+    pdfAttachments: readEntryPdfAttachments(row.captureDir, row.projectId),
+    pdfTextExtractions: readEntryPdfTextExtractions(row.captureDir, row.projectId),
     artifacts: artifacts.map((artifact) => ({
       id: artifact.id,
       entryId: artifact.entryId,
@@ -601,45 +663,182 @@ export function searchEntries(args: {
     return [];
   }
 
+  const tokens = searchTokens(query);
+
+  if (tokens.length === 0) {
+    return [];
+  }
+
   const db = openCatalog(args.projectId);
   const limit = Math.max(1, Math.min(args.limit ?? 20, 100));
 
-  const rows = db
+  const entries = db
     .prepare(
       `
       select
-        m.entry_id as entryId,
-        m.chunk_id as chunkId,
-        e.purpose as entryPurpose,
-        e.name as entryName,
-        e.description as entryDescription,
-        c.kind as chunkKind,
-        c.text as chunkText,
-        e.created_at as createdAt,
-        bm25(chunks_fts) as score
-      from chunks_fts
-      join chunk_index_map m on m.fts_rowid = chunks_fts.rowid
-      join entries e on e.id = m.entry_id
-      join chunks c on c.id = m.chunk_id
-      where e.project_id = ? and chunks_fts match ?
-      order by score
-      limit ?
+        id,
+        project_id as projectId,
+        purpose,
+        name,
+        description,
+        created_at as createdAt
+      from entries
+      where project_id = ?
+      order by created_at desc
+      limit 500
       `,
     )
-    .all(args.projectId, toFtsQuery(query), limit) as SqlSearchRow[];
+    .all(args.projectId) as SqlEntrySearchRow[];
 
-  return rows.map((row) => ({
-    entryId: row.entryId,
-    chunkId: row.chunkId,
-    entryPurpose: row.entryPurpose ?? "software_implementation",
-    entryName: row.entryName,
-    entryDescription: row.entryDescription ?? "",
-    chunkKind: row.chunkKind,
-    chunkText: row.chunkText,
-    createdAt: row.createdAt,
-    changedFiles: getChangedFiles(db, row.entryId),
-    score: row.score,
-  }));
+  const chunks = db
+    .prepare(
+      `
+      select
+        c.id,
+        c.entry_id as entryId,
+        c.artifact_id as artifactId,
+        c.kind,
+        c.text,
+        c.token_count as tokenCount
+      from chunks c
+      join entries e on e.id = c.entry_id
+      where e.project_id = ?
+      order by c.id
+      `,
+    )
+    .all(args.projectId) as SqlChunkRow[];
+
+  const chunksByEntry = new Map<string, SqlChunkRow[]>();
+
+  for (const chunk of chunks) {
+    const current = chunksByEntry.get(chunk.entryId) ?? [];
+    current.push(chunk);
+    chunksByEntry.set(chunk.entryId, current);
+  }
+
+  const scored = entries
+    .map((entry) => {
+      const entryChunks = chunksByEntry.get(entry.id) ?? [];
+      const changedFiles = getChangedFiles(db, entry.id);
+      const entryDescription = entry.description ?? "";
+
+      const baseScore =
+        scoreSearchText(query, tokens, entry.name, 80) +
+        scoreSearchText(query, tokens, entryDescription, 55) +
+        scoreSearchText(query, tokens, changedFiles.join("\n"), 24);
+
+      let bestChunk = entryChunks[0] ?? null;
+      let bestScore = baseScore;
+
+      for (const chunk of entryChunks) {
+        const chunkScore = scoreSearchText(
+          query,
+          tokens,
+          chunk.text,
+          weightForChunkKind(chunk.kind),
+        );
+        const totalScore = baseScore + chunkScore;
+
+        if (totalScore > bestScore) {
+          bestScore = totalScore;
+          bestChunk = chunk;
+        }
+      }
+
+      if (bestScore <= 0) {
+        return null;
+      }
+
+      return {
+        entryId: entry.id,
+        chunkId: bestChunk?.id ?? `${entry.id}_entry`,
+        entryPurpose: entry.purpose ?? "software_implementation",
+        entryName: entry.name,
+        entryDescription,
+        chunkKind: bestChunk?.kind ?? "entry",
+        chunkText: bestChunk?.text ?? entryDescription,
+        createdAt: entry.createdAt,
+        changedFiles,
+        score: bestScore,
+      };
+    })
+    .filter((entry): entry is EntrySearchResult => entry !== null)
+    .sort((left, right) => right.score - left.score || right.createdAt.localeCompare(left.createdAt));
+
+  return scored.slice(0, limit);
+}
+
+function searchTokens(value: string): string[] {
+  const normalized = normalizeSearchText(value);
+  const tokens = normalized
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+
+  return Array.from(new Set(tokens));
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function scoreSearchText(
+  query: string,
+  tokens: string[],
+  value: string,
+  weight: number,
+): number {
+  const text = normalizeSearchText(value);
+
+  if (!text) {
+    return 0;
+  }
+
+  let score = 0;
+  const normalizedQuery = normalizeSearchText(query);
+
+  if (normalizedQuery.length >= 3 && text.includes(normalizedQuery)) {
+    score += weight * 4;
+  }
+
+  for (const token of tokens) {
+    if (text.includes(token)) {
+      score += weight;
+    }
+  }
+
+  return score;
+}
+
+function weightForChunkKind(kind: string): number {
+  switch (kind) {
+    case "notes":
+      return 64;
+    case "image_insights":
+      return 58;
+    case "image_attachments":
+      return 52;
+    case "pdf_text":
+      return 56;
+    case "pdf_attachments":
+      return 50;
+    case "assistant_output":
+      return 42;
+    case "git_changed_files":
+      return 34;
+    case "selected_files":
+      return 30;
+    case "prompt":
+      return 18;
+    case "system_prompt":
+      return 1;
+    default:
+      return 20;
+  }
 }
 
 export function buildRagContext(args: {
@@ -1032,6 +1231,8 @@ function buildChunks(
     selectedPaths: string[];
     imageAttachments: ImageAttachment[];
     imageInsightsMarkdown: string;
+    pdfAttachments: PdfAttachment[];
+    pdfTextMarkdown: string;
     gitSnapshot: GitChangedFilesSnapshot | null;
   },
 ): ChunkRecord[] {
@@ -1057,6 +1258,22 @@ function buildChunks(
     "image_insights",
     content.imageInsightsMarkdown,
     artifactId(artifacts, "image_insights_markdown"),
+  );
+  addTextChunks(
+    chunks,
+    entryId,
+    "pdf_attachments",
+    content.pdfAttachments
+      .map((attachment) => `${attachment.fileName}\t${attachment.sha256}\t${attachment.storedPath}`)
+      .join("\n"),
+    artifactId(artifacts, "pdf_attachments"),
+  );
+  addTextChunks(
+    chunks,
+    entryId,
+    "pdf_text",
+    content.pdfTextMarkdown,
+    artifactId(artifacts, "pdf_text_markdown"),
   );
 
   if (content.gitSnapshot) {
@@ -1103,6 +1320,91 @@ function addTextChunks(
       artifactId: artifactIdValue,
     });
   }
+}
+
+function readEntryPdfAttachments(
+  captureDir: string,
+  projectId: string,
+): PdfAttachment[] {
+  const filePath = path.join(captureDir, "pdf-attachments.json");
+
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Invalid PDF attachment manifest: ${filePath}`);
+  }
+
+  return parsed.filter(isPdfAttachment).filter((attachment) => attachment.projectId === projectId);
+}
+
+function isPdfAttachment(value: unknown): value is PdfAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    typeof record.id === "string" &&
+    typeof record.projectId === "string" &&
+    typeof record.sourcePath === "string" &&
+    typeof record.storedPath === "string" &&
+    typeof record.fileName === "string" &&
+    typeof record.extension === "string" &&
+    record.mimeType === "application/pdf" &&
+    typeof record.sizeBytes === "number" &&
+    typeof record.sha256 === "string" &&
+    typeof record.addedAt === "string"
+  );
+}
+
+function readEntryPdfTextExtractions(
+  captureDir: string,
+  projectId: string,
+): PdfTextExtraction[] {
+  const filePath = path.join(captureDir, "pdf-text.json");
+
+  if (!existsSync(filePath)) {
+    return [];
+  }
+
+  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Invalid PDF text manifest: ${filePath}`);
+  }
+
+  const attachmentHashes = new Set(
+    readEntryPdfAttachments(captureDir, projectId).map((attachment) => attachment.sha256),
+  );
+
+  return parsed.filter(isPdfTextExtraction).filter((extraction) =>
+    attachmentHashes.has(extraction.sha256),
+  );
+}
+
+function isPdfTextExtraction(value: unknown): value is PdfTextExtraction {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    typeof record.pdfId === "string" &&
+    typeof record.sha256 === "string" &&
+    typeof record.fileName === "string" &&
+    (record.status === "completed" || record.status === "failed") &&
+    typeof record.title === "string" &&
+    typeof record.text === "string" &&
+    (record.pageCount === undefined || typeof record.pageCount === "number") &&
+    (record.error === undefined || typeof record.error === "string") &&
+    typeof record.extractedAt === "string"
+  );
 }
 
 function readEntryImageAttachments(
@@ -1316,16 +1618,6 @@ function sha256(value: string): string {
 function estimateTokenCount(value: string): number {
   return Math.ceil(value.length / 4);
 }
-
-function toFtsQuery(value: string): string {
-  return value
-    .split(/\s+/)
-    .map((part) => part.replace(/["']/g, "").trim())
-    .filter((part) => part.length > 0)
-    .map((part) => `"${part}"`)
-    .join(" ");
-}
-
 function addDaysIso(value: string, days: number): string {
   const date = new Date(value);
   date.setUTCDate(date.getUTCDate() + days);

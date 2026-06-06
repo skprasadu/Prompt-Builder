@@ -11,6 +11,7 @@ import { getProjectState, saveProjectState } from "./projectStateStore";
 import { createLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
 import { loadSystemPrompt, saveSystemPrompt } from "./systemPrompt";
 import { addImageAttachments, clearImageAttachments, copyImageAttachmentsToClipboard, deleteImageAttachment, listImageAttachments, type ImageAttachment } from "./attachments/imageAttachmentStore";
+import { addPdfAttachments, clearPdfAttachments, copyPdfAttachmentsToClipboard, deletePdfAttachment, listPdfAttachments, type PdfAttachment } from "./attachments/pdfAttachmentStore";
 
 type CommandArgs = Record<string, unknown>;
 type EntryPurpose = "software_implementation" | "research";
@@ -121,6 +122,27 @@ export function registerCommandHandlers(): void {
         case "attachments:copy_images_to_clipboard":
           return copyImageAttachmentsToClipboard(requiredStringArray(args, "paths"));
 
+        case "attachments:add_pdfs":
+          return addPdfAttachments({
+            projectId: requiredString(args, "projectId"),
+            paths: requiredStringArray(args, "paths"),
+          });
+
+        case "attachments:list_pdfs":
+          return listPdfAttachments(requiredString(args, "projectId"));
+
+        case "attachments:delete_pdf":
+          return deletePdfAttachment({
+            projectId: requiredString(args, "projectId"),
+            sha256: requiredString(args, "sha256"),
+          });
+
+        case "attachments:clear_pdfs":
+          return clearPdfAttachments(requiredString(args, "projectId"));
+
+        case "attachments:copy_pdfs_to_clipboard":
+          return copyPdfAttachmentsToClipboard(requiredStringArray(args, "paths"));
+
         case "entry:create":
           return createEntry({
             projectId: requiredString(args, "projectId"),
@@ -133,6 +155,7 @@ export function registerCommandHandlers(): void {
             promptText: optionalString(args, "promptText") ?? "",
             selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
             imageAttachments: optionalImageAttachments(args, "imageAttachments") ?? [],
+            pdfAttachments: optionalPdfAttachments(args, "pdfAttachments") ?? [],
             includeTree: optionalBoolean(args, "includeTree") ?? false,
             includeGitChangedFiles: optionalBoolean(args, "includeGitChangedFiles") ?? false,
             tokenCount: optionalNumber(args, "tokenCount") ?? 0,
@@ -308,6 +331,40 @@ function optionalImageAttachments(
       fileName: requiredRecordString(item, "fileName"),
       extension: requiredRecordString(item, "extension"),
       mimeType: requiredRecordString(item, "mimeType"),
+      sizeBytes: requiredRecordNumber(item, "sizeBytes"),
+      sha256: requiredRecordString(item, "sha256"),
+      addedAt: requiredRecordString(item, "addedAt"),
+    };
+  });
+}
+
+function optionalPdfAttachments(
+  args: CommandArgs,
+  key: string,
+): PdfAttachment[] | undefined {
+  const value = args[key];
+
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected PdfAttachment[] argument: ${key}`);
+  }
+
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`Expected PdfAttachment at ${key}[${index}]`);
+    }
+
+    return {
+      id: requiredRecordString(item, "id"),
+      projectId: requiredRecordString(item, "projectId"),
+      sourcePath: requiredRecordString(item, "sourcePath"),
+      storedPath: requiredRecordString(item, "storedPath"),
+      fileName: requiredRecordString(item, "fileName"),
+      extension: requiredRecordString(item, "extension"),
+      mimeType: "application/pdf",
       sizeBytes: requiredRecordNumber(item, "sizeBytes"),
       sha256: requiredRecordString(item, "sha256"),
       addedAt: requiredRecordString(item, "addedAt"),

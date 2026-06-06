@@ -13,6 +13,33 @@ export interface ImageAttachment {
   addedAt: string;
 }
 
+export interface PdfAttachment {
+  id: string;
+  projectId: string;
+  sourcePath: string;
+  storedPath: string;
+  fileName: string;
+  extension: string;
+  mimeType: "application/pdf";
+  sizeBytes: number;
+  sha256: string;
+  addedAt: string;
+}
+
+export type PdfTextExtractionStatus = "completed" | "failed";
+
+export interface PdfTextExtraction {
+  pdfId: string;
+  sha256: string;
+  fileName: string;
+  status: PdfTextExtractionStatus;
+  title: string;
+  text: string;
+  pageCount?: number;
+  error?: string;
+  extractedAt: string;
+}
+
 export type ImageInsightStatus = "completed" | "failed";
 
 export interface ImageInsight {
@@ -39,6 +66,7 @@ export interface PromptWorkflowState {
   promptText: string;
   selectedPaths: string[];
   imageAttachments: ImageAttachment[];
+  pdfAttachments: PdfAttachment[];
   includeTree: boolean;
   tokenCount: number;
   folderPanelWidth: number;
@@ -51,6 +79,9 @@ export interface LocalProjectState {
   selectedPaths: string[];
   expandedPaths: string[];
   imageAttachments: ImageAttachment[];
+  selectedImageAttachmentSha256s: string[];
+  pdfAttachments: PdfAttachment[];
+  selectedPdfAttachmentSha256s: string[];
   folderPanelWidth: number;
   updatedAt: string;
 }
@@ -91,6 +122,8 @@ export interface EntryChunk {
 export interface EntryDetail extends EntrySummary {
   imageAttachments: ImageAttachment[];
   imageInsights: ImageInsight[];
+  pdfAttachments: PdfAttachment[];
+  pdfTextExtractions: PdfTextExtraction[];
   userNotes: string;
   summary: string;
   syncStatus: string;
@@ -122,6 +155,7 @@ export interface CreateEntryInput {
   promptText: string;
   selectedPaths: string[];
   imageAttachments: ImageAttachment[];
+  pdfAttachments: PdfAttachment[];
   includeTree: boolean;
   includeGitChangedFiles: boolean;
   tokenCount: number;

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { projectDir } from "./projectStore";
 import type { ImageAttachment } from "./attachments/imageAttachmentStore";
+import type { PdfAttachment } from "./attachments/pdfAttachmentStore";
 
 export interface LocalProjectState {
   promptText: string;
@@ -10,6 +11,9 @@ export interface LocalProjectState {
   selectedPaths: string[];
   expandedPaths: string[];
   imageAttachments: ImageAttachment[];
+  selectedImageAttachmentSha256s: string[];
+  pdfAttachments: PdfAttachment[];
+  selectedPdfAttachmentSha256s: string[];
   folderPanelWidth: number;
   updatedAt: string;
 }
@@ -45,6 +49,11 @@ export async function saveProjectState(args: {
     selectedPaths: args.state.selectedPaths ?? current.selectedPaths,
     expandedPaths: args.state.expandedPaths ?? current.expandedPaths,
     imageAttachments: args.state.imageAttachments ?? current.imageAttachments,
+    selectedImageAttachmentSha256s:
+      args.state.selectedImageAttachmentSha256s ?? current.selectedImageAttachmentSha256s,
+    pdfAttachments: args.state.pdfAttachments ?? current.pdfAttachments,
+    selectedPdfAttachmentSha256s:
+      args.state.selectedPdfAttachmentSha256s ?? current.selectedPdfAttachmentSha256s,
     updatedAt: new Date().toISOString(),
   };
 
@@ -66,6 +75,9 @@ function defaultProjectState(): LocalProjectState {
     selectedPaths: [],
     expandedPaths: [],
     imageAttachments: [],
+    selectedImageAttachmentSha256s: [],
+    pdfAttachments: [],
+    selectedPdfAttachmentSha256s: [],
     folderPanelWidth: 360,
     updatedAt: new Date().toISOString(),
   };
@@ -90,12 +102,28 @@ function normalizeProjectState(
     return null;
   }
 
+  const imageAttachments = parseImageAttachments(value.imageAttachments, projectId);
+  const selectedImageAttachmentSha256s = isStringArray(value.selectedImageAttachmentSha256s)
+    ? value.selectedImageAttachmentSha256s.filter((sha256) =>
+        imageAttachments.some((attachment) => attachment.sha256 === sha256),
+      )
+    : imageAttachments.map((attachment) => attachment.sha256);
+  const pdfAttachments = parsePdfAttachments(value.pdfAttachments, projectId);
+  const selectedPdfAttachmentSha256s = isStringArray(value.selectedPdfAttachmentSha256s)
+    ? value.selectedPdfAttachmentSha256s.filter((sha256) =>
+        pdfAttachments.some((attachment) => attachment.sha256 === sha256),
+      )
+    : pdfAttachments.map((attachment) => attachment.sha256);
+
   return {
     promptText: value.promptText,
     includeTree: value.includeTree,
     selectedPaths: value.selectedPaths,
     expandedPaths: value.expandedPaths,
-    imageAttachments: parseImageAttachments(value.imageAttachments, projectId),
+    imageAttachments,
+    selectedImageAttachmentSha256s,
+    pdfAttachments,
+    selectedPdfAttachmentSha256s,
     folderPanelWidth: value.folderPanelWidth,
     updatedAt: value.updatedAt,
   };
@@ -112,6 +140,38 @@ function parseImageAttachments(
   return value
     .filter(isImageAttachment)
     .filter((attachment) => attachment.projectId === projectId);
+}
+
+function parsePdfAttachments(
+  value: unknown,
+  projectId: string,
+): PdfAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isPdfAttachment)
+    .filter((attachment) => attachment.projectId === projectId);
+}
+
+function isPdfAttachment(value: unknown): value is PdfAttachment {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.id === "string" &&
+    typeof value.projectId === "string" &&
+    typeof value.sourcePath === "string" &&
+    typeof value.storedPath === "string" &&
+    typeof value.fileName === "string" &&
+    typeof value.extension === "string" &&
+    value.mimeType === "application/pdf" &&
+    typeof value.sizeBytes === "number" &&
+    typeof value.sha256 === "string" &&
+    typeof value.addedAt === "string"
+  );
 }
 
 function isImageAttachment(value: unknown): value is ImageAttachment {

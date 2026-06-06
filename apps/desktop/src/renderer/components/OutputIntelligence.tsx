@@ -146,9 +146,10 @@ export default function OutputIntelligence({
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const hasSearchQuery = query.trim().length > 0;
   const visibleItems = useMemo<MemoryItem[]>(
-    () => (results.length > 0 ? results : entries),
-    [entries, results],
+    () => (hasSearchQuery ? results : entries),
+    [entries, hasSearchQuery, results],
   );
 
   useEffect(() => {
@@ -202,6 +203,7 @@ export default function OutputIntelligence({
       promptText: promptState?.promptText ?? "",
       selectedPaths: promptState?.selectedPaths ?? [],
       imageAttachments: promptState?.imageAttachments ?? [],
+      pdfAttachments: promptState?.pdfAttachments ?? [],
       includeTree: promptState?.includeTree ?? false,
       includeGitChangedFiles,
       tokenCount: promptState?.tokenCount ?? 0,
@@ -250,6 +252,8 @@ export default function OutputIntelligence({
 
       if (nextResults[0]) {
         await openEntry(nextResults[0].entryId);
+      } else {
+        setSelectedEntry(null);
       }
     } catch (err: unknown) {
       setResults([]);
@@ -482,6 +486,7 @@ export default function OutputIntelligence({
           error={error}
           query={query}
           visibleItems={visibleItems}
+          hasSearchQuery={hasSearchQuery}
           selectedEntry={selectedEntry}
           setError={setError}
           setQuery={setQuery}
@@ -602,6 +607,10 @@ export default function OutputIntelligence({
               />
               <Chip
                 size="small"
+                label={`PDFs: ${promptState?.pdfAttachments.length ?? 0}`}
+              />
+              <Chip
+                size="small"
                 label={`Tokens: ${promptState?.tokenCount ?? 0}`}
               />
             </Stack>
@@ -631,6 +640,7 @@ interface ManageEntriesPanelProps {
   error: string | null;
   query: string;
   visibleItems: MemoryItem[];
+  hasSearchQuery: boolean;
   selectedEntry: EntryDetail | null;
   setError: (value: string | null) => void;
   setQuery: (value: string) => void;
@@ -648,6 +658,7 @@ function ManageEntriesPanel({
   error,
   query,
   visibleItems,
+  hasSearchQuery,
   selectedEntry,
   setError,
   setQuery,
@@ -764,7 +775,7 @@ function ManageEntriesPanel({
 
             {visibleItems.length === 0 && (
               <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                No entries yet.
+                {hasSearchQuery ? "No matching entries." : "No entries yet."}
               </Typography>
             )}
           </List>
@@ -880,6 +891,61 @@ function EntryDetailPanel({
         ) : (
           <Typography variant="body2" color="text.secondary">
             No images captured.
+          </Typography>
+        )}
+      </Box>
+
+      <Box>
+        <Typography variant="subtitle2">PDFs used</Typography>
+        {selectedEntry.pdfAttachments.length > 0 ? (
+          <Stack direction="row" spacing={0.75} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.75 }}>
+            {selectedEntry.pdfAttachments.map((attachment) => (
+              <Chip
+                key={attachment.sha256}
+                size="small"
+                label={`${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+              />
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No PDFs captured.
+          </Typography>
+        )}
+      </Box>
+
+      <Box>
+        <Typography variant="subtitle2">PDF text</Typography>
+        {selectedEntry.pdfTextExtractions.length > 0 ? (
+          <Stack spacing={1} sx={{ mt: 0.75 }}>
+            {selectedEntry.pdfTextExtractions.map((extraction) => (
+              <Paper key={extraction.sha256} variant="outlined" sx={{ p: 1 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {extraction.fileName}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {extraction.status}
+                  {extraction.pageCount !== undefined ? ` · ${extraction.pageCount} pages` : ""}
+                </Typography>
+                <Typography
+                  component="pre"
+                  variant="body2"
+                  sx={{
+                    mt: 0.75,
+                    maxHeight: 160,
+                    overflow: "auto",
+                    whiteSpace: "pre-wrap",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {extraction.text.trim() ? extraction.text : (extraction.error ?? "No extractable text found.")}
+                </Typography>
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No PDF text captured.
           </Typography>
         )}
       </Box>
@@ -1092,6 +1158,25 @@ function renderEntryContext(entry: EntryDetail): string {
             `- ${attachment.fileName} (${attachment.sha256}) ${attachment.storedPath}`,
         )
       : ["No images captured."]),
+    "",
+    "## PDFs",
+    ...(entry.pdfAttachments.length > 0
+      ? entry.pdfAttachments.map(
+          (attachment) =>
+            `- ${attachment.fileName} (${attachment.sha256}) ${attachment.storedPath}`,
+        )
+      : ["No PDFs captured."]),
+    "",
+    "## PDF text",
+    ...(entry.pdfTextExtractions.length > 0
+      ? entry.pdfTextExtractions.flatMap((extraction) => [
+          `### ${extraction.fileName}`,
+          extraction.title ? `Title: ${extraction.title}` : "Title: none",
+          extraction.pageCount !== undefined ? `Pages: ${extraction.pageCount}` : "Pages: unknown",
+          extraction.text.trim() ? extraction.text : (extraction.error ?? "No extractable text found."),
+          "",
+        ])
+      : ["No PDF text captured."]),
     "",
     "## Image insights",
     ...(entry.imageInsights.length > 0

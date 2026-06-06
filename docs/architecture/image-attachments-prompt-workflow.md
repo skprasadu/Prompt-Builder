@@ -62,3 +62,26 @@ The entry capture writes:
 The SQLite index receives an `image_insights` chunk so image summaries, visible text, tags, UI elements, implementation hints, and research concepts become searchable later.
 
 If image analysis fails, entry capture still succeeds and records a failed image insight with the exact error message.
+
+## Prompt basket image selection
+
+Images in the prompt workflow can stay in the project image list while being selected or unselected for clipboard copy.
+
+- Selected chips are copied to ChatGPT Desktop.
+- Unselected chips remain visible and are not copied.
+- Removing a chip removes it from the current prompt image list.
+- Captured entries receive only the currently selected prompt images.
+
+## PDF attachments
+
+Prompt Workflow supports PDFs beside images.
+
+- Drag/drop PDFs into Prompt Workflow.
+- PDFs are archived per project under `.rapid_prompt/projects/<project>/attachments/pdfs/...`.
+- PDFs are deduped by SHA-256.
+- PDF chips can be selected or unselected for clipboard copy.
+- Copy PDF attachments writes PDF file references to the macOS clipboard for pasting into ChatGPT Desktop.
+- Entry capture writes `pdf-attachments.json`, `pdf-text.json`, and `pdf-text.md`.
+- The SQLite index receives `pdf_attachments` and `pdf_text` chunks so PDF filenames and extracted text are searchable.
+
+PDF text extraction is local and best-effort. It extracts literal and Flate-compressed PDF text streams without adding a new dependency. Scanned PDFs may require a later OCR/VLM pass.

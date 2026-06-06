@@ -10,7 +10,7 @@ import {
 
 import type { Node, FileValue } from "../types/fs";
 import type { LocalProject } from "../types/project";
-import type { ImageAttachment, LocalProjectState, PromptWorkflowState } from "../types/capture";
+import type { ImageAttachment, LocalProjectState, PdfAttachment, PromptWorkflowState } from "../types/capture";
 import { isDirNode } from "../types/fs";
 import { formatOutput, type OutputOptions } from "../lib/formatters";
 import { countTokens } from "../lib/tokenize";
@@ -62,6 +62,7 @@ import {
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
+import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
@@ -110,10 +111,19 @@ export default function PromptBuilder({
   // Folder-only toggle
   const [includeTree, setIncludeTree] = useState<boolean>(false);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [selectedImageAttachmentSha256s, setSelectedImageAttachmentSha256s] =
+    useState<Set<string>>(() => new Set());
   const [imageArchive, setImageArchive] = useState<ImageAttachment[]>([]);
   const [imageArchiveOpen, setImageArchiveOpen] = useState<boolean>(false);
   const [archiveDeleteTarget, setArchiveDeleteTarget] = useState<ImageAttachment | null>(null);
   const [archiveClearConfirmOpen, setArchiveClearConfirmOpen] = useState<boolean>(false);
+  const [pdfAttachments, setPdfAttachments] = useState<PdfAttachment[]>([]);
+  const [selectedPdfAttachmentSha256s, setSelectedPdfAttachmentSha256s] =
+    useState<Set<string>>(() => new Set());
+  const [pdfArchive, setPdfArchive] = useState<PdfAttachment[]>([]);
+  const [pdfArchiveOpen, setPdfArchiveOpen] = useState<boolean>(false);
+  const [pdfArchiveDeleteTarget, setPdfArchiveDeleteTarget] = useState<PdfAttachment | null>(null);
+  const [pdfArchiveClearConfirmOpen, setPdfArchiveClearConfirmOpen] = useState<boolean>(false);
 
   // Units (Excel/Block/API)
   const [unitSource, setUnitSource] = useState<string>(""); // absolute path
@@ -211,9 +221,16 @@ export default function PromptBuilder({
       setSelected(new Set());
       setImageAttachments([]);
       setImageArchive([]);
+      setSelectedImageAttachmentSha256s(new Set());
       setImageArchiveOpen(false);
       setArchiveDeleteTarget(null);
       setArchiveClearConfirmOpen(false);
+      setPdfAttachments([]);
+      setSelectedPdfAttachmentSha256s(new Set());
+      setPdfArchive([]);
+      setPdfArchiveOpen(false);
+      setPdfArchiveDeleteTarget(null);
+      setPdfArchiveClearConfirmOpen(false);
       return;
     }
 
@@ -232,9 +249,16 @@ export default function PromptBuilder({
     setSelected(new Set());
     setImageAttachments([]);
     setImageArchive([]);
+    setSelectedImageAttachmentSha256s(new Set());
     setImageArchiveOpen(false);
     setArchiveDeleteTarget(null);
     setArchiveClearConfirmOpen(false);
+    setPdfAttachments([]);
+    setSelectedPdfAttachmentSha256s(new Set());
+    setPdfArchive([]);
+    setPdfArchiveOpen(false);
+    setPdfArchiveDeleteTarget(null);
+    setPdfArchiveClearConfirmOpen(false);
     setText("");
     setIncludeTree(false);
 
@@ -251,12 +275,16 @@ export default function PromptBuilder({
         const archive = await invoke<ImageAttachment[]>("attachments:list_images", {
           projectId,
         });
+        const pdfArchiveRows = await invoke<PdfAttachment[]>("attachments:list_pdfs", {
+          projectId,
+        });
 
         if (projectTreeLoadRef.current !== loadId) {
           return;
         }
 
         setImageArchive(archive);
+        setPdfArchive(pdfArchiveRows);
 
         setText(savedState.promptText ?? "");
         setIncludeTree(savedState.includeTree ?? false);
@@ -266,13 +294,36 @@ export default function PromptBuilder({
             Math.max(FOLDER_PANEL_MIN_WIDTH, savedState.folderPanelWidth ?? FOLDER_PANEL_DEFAULT_WIDTH),
           ),
         );
-        setImageAttachments(() => {
-          const archiveHashes = new Set(archive.map((attachment) => attachment.sha256));
+        const loadedImageAttachments = (savedState.imageAttachments ?? []).filter(
+          (attachment) => attachment.projectId === projectId,
+        );
+        const loadedImageAttachmentHashes = new Set(
+          loadedImageAttachments.map((attachment) => attachment.sha256),
+        );
 
-          return (savedState.imageAttachments ?? []).filter(
-            (attachment) => attachment.projectId === projectId && archiveHashes.has(attachment.sha256),
-          );
-        });
+        setImageAttachments(loadedImageAttachments);
+        setSelectedImageAttachmentSha256s(
+          new Set(
+            (savedState.selectedImageAttachmentSha256s ?? loadedImageAttachments.map((attachment) => attachment.sha256)).filter((sha256) =>
+              loadedImageAttachmentHashes.has(sha256),
+            ),
+          ),
+        );
+        const loadedPdfAttachments = (savedState.pdfAttachments ?? []).filter(
+          (attachment) => attachment.projectId === projectId,
+        );
+        const loadedPdfAttachmentHashes = new Set(
+          loadedPdfAttachments.map((attachment) => attachment.sha256),
+        );
+
+        setPdfAttachments(loadedPdfAttachments);
+        setSelectedPdfAttachmentSha256s(
+          new Set(
+            (savedState.selectedPdfAttachmentSha256s ?? loadedPdfAttachments.map((attachment) => attachment.sha256)).filter((sha256) =>
+              loadedPdfAttachmentHashes.has(sha256),
+            ),
+          ),
+        );
 
         const loadedTree = await loadTree(projectRootPath, false, loadId);
 
@@ -331,6 +382,13 @@ export default function PromptBuilder({
           selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
           expandedPaths: Array.from(expanded).map((absolutePath) => toRelative(rootPath, absolutePath)),
           imageAttachments,
+          selectedImageAttachmentSha256s: Array.from(selectedImageAttachmentSha256s).filter(
+            (sha256) => imageAttachments.some((attachment) => attachment.sha256 === sha256),
+          ),
+          pdfAttachments,
+          selectedPdfAttachmentSha256s: Array.from(selectedPdfAttachmentSha256s).filter(
+            (sha256) => pdfAttachments.some((attachment) => attachment.sha256 === sha256),
+          ),
           folderPanelWidth,
         },
       }).catch((err: unknown) => {
@@ -343,7 +401,20 @@ export default function PromptBuilder({
         window.clearTimeout(projectStateSaveRef.current);
       }
     };
-  }, [expanded, folderPanelWidth, imageAttachments, includeTree, project?.id, rootPath, selected, text]);
+  }, [
+    expanded,
+    folderPanelWidth,
+    imageAttachments,
+    includeTree,
+    pdfAttachments,
+    pdfAttachments,
+    project?.id,
+    rootPath,
+    selected,
+    selectedImageAttachmentSha256s,
+    selectedPdfAttachmentSha256s,
+    text,
+  ]);
 
   useEffect(() => {
     if (!project?.id) {
@@ -355,13 +426,21 @@ export default function PromptBuilder({
     }
 
     workspaceStateEmitRef.current = window.setTimeout(() => {
+      const selectedImageAttachmentsForPrompt = imageAttachments.filter((attachment) =>
+        selectedImageAttachmentSha256s.has(attachment.sha256),
+      );
+      const selectedPdfAttachmentsForPrompt = pdfAttachments.filter((attachment) =>
+        selectedPdfAttachmentSha256s.has(attachment.sha256),
+      );
+
       onWorkspaceStateChange?.({
         projectId: project.id,
         rootPath,
         systemPrompt,
         promptText: text,
         selectedPaths: Array.from(selected).map((absolutePath) => toRelative(rootPath, absolutePath)),
-        imageAttachments,
+        imageAttachments: selectedImageAttachmentsForPrompt,
+        pdfAttachments: selectedPdfAttachmentsForPrompt,
         includeTree,
         tokenCount,
         folderPanelWidth,
@@ -382,6 +461,8 @@ export default function PromptBuilder({
     project?.id,
     rootPath,
     selected,
+    selectedImageAttachmentSha256s,
+    selectedPdfAttachmentSha256s,
     systemPrompt,
     text,
     tokenCount,
@@ -800,8 +881,12 @@ export default function PromptBuilder({
         paths,
       });
 
-      setImageArchive((current) => mergeImageAttachments(current, added));
       setImageAttachments((current) => mergeImageAttachments(current, added));
+      setSelectedImageAttachmentSha256s((current) => {
+        const next = new Set(current);
+        added.forEach((attachment) => next.add(attachment.sha256));
+        return next;
+      });
     } catch (err: unknown) {
       setError(toErrorMessage(err));
     } finally {
@@ -810,9 +895,13 @@ export default function PromptBuilder({
   }
 
   async function copyImageAttachments(): Promise<void> {
-    const paths = imageAttachments.map((attachment) => attachment.storedPath);
+    const selectedImageAttachments = imageAttachments.filter((attachment) =>
+      selectedImageAttachmentSha256s.has(attachment.sha256),
+    );
+    const paths = selectedImageAttachments.map((attachment) => attachment.storedPath);
 
     if (paths.length === 0) {
+      setError("Select at least one image to copy.");
       return;
     }
 
@@ -830,10 +919,184 @@ export default function PromptBuilder({
     }
   }
 
+  function toggleImageAttachmentSelection(sha256: string): void {
+    setSelectedImageAttachmentSha256s((current) => {
+      const next = new Set(current);
+
+      if (next.has(sha256)) {
+        next.delete(sha256);
+      } else {
+        next.add(sha256);
+      }
+
+      return next;
+    });
+  }
+
   function removeImageAttachment(sha256: string): void {
     setImageAttachments((current) =>
       current.filter((attachment) => attachment.sha256 !== sha256),
     );
+    setSelectedImageAttachmentSha256s((current) => {
+      const next = new Set(current);
+      next.delete(sha256);
+      return next;
+    });
+  }
+
+  async function addDroppedPdfFiles(files: File[]): Promise<void> {
+    if (!project?.id) {
+      setError("Project is required before adding PDF attachments.");
+      return;
+    }
+
+    const paths = getDroppedFilePaths(files);
+
+    if (paths.length === 0) {
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      const added = await invoke<PdfAttachment[]>("attachments:add_pdfs", {
+        projectId: project.id,
+        paths,
+      });
+
+      setPdfAttachments((current) => mergePdfAttachments(current, added));
+      setSelectedPdfAttachmentSha256s((current) => {
+        const next = new Set(current);
+        added.forEach((attachment) => next.add(attachment.sha256));
+        return next;
+      });
+      setPdfArchive((current) => mergePdfAttachments(current, added));
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyPdfAttachments(): Promise<void> {
+    const selectedPdfAttachments = pdfAttachments.filter((attachment) =>
+      selectedPdfAttachmentSha256s.has(attachment.sha256),
+    );
+    const paths = selectedPdfAttachments.map((attachment) => attachment.storedPath);
+
+    if (paths.length === 0) {
+      setError("Select at least one PDF to copy.");
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      await invoke<{ copied: number }>("attachments:copy_pdfs_to_clipboard", {
+        paths,
+      });
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function togglePdfAttachmentSelection(sha256: string): void {
+    setSelectedPdfAttachmentSha256s((current) => {
+      const next = new Set(current);
+
+      if (next.has(sha256)) {
+        next.delete(sha256);
+      } else {
+        next.add(sha256);
+      }
+
+      return next;
+    });
+  }
+
+  function removePdfAttachment(sha256: string): void {
+    setPdfAttachments((current) =>
+      current.filter((attachment) => attachment.sha256 !== sha256),
+    );
+    setSelectedPdfAttachmentSha256s((current) => {
+      const next = new Set(current);
+      next.delete(sha256);
+      return next;
+    });
+  }
+
+  function togglePdfAttachmentInBasket(attachment: PdfAttachment): void {
+    setPdfAttachments((current) => {
+      if (current.some((item) => item.sha256 === attachment.sha256)) {
+        return current.filter((item) => item.sha256 !== attachment.sha256);
+      }
+
+      return mergePdfAttachments(current, [attachment]);
+    });
+  }
+
+  async function deletePdfFromArchive(attachment: PdfAttachment): Promise<void> {
+    if (!project?.id) {
+      setError("Project is required before deleting a PDF.");
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      await invoke("attachments:delete_pdf", {
+        projectId: project.id,
+        sha256: attachment.sha256,
+      });
+
+      setPdfArchive((current) =>
+        current.filter((item) => item.sha256 !== attachment.sha256),
+      );
+      setPdfAttachments((current) =>
+        current.filter((item) => item.sha256 !== attachment.sha256),
+      );
+      setSelectedPdfAttachmentSha256s((current) => {
+        const next = new Set(current);
+        next.delete(attachment.sha256);
+        return next;
+      });
+      setPdfArchiveDeleteTarget(null);
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearPdfArchive(): Promise<void> {
+    if (!project?.id) {
+      setError("Project is required before clearing the PDF archive.");
+      return;
+    }
+
+    setError(null);
+    setBusy(true);
+
+    try {
+      await invoke("attachments:clear_pdfs", {
+        projectId: project.id,
+      });
+
+      setPdfArchive([]);
+      setPdfAttachments([]);
+      setSelectedPdfAttachmentSha256s(new Set());
+      setPdfArchiveClearConfirmOpen(false);
+      setPdfArchiveOpen(false);
+    } catch (err: unknown) {
+      setError(toErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function toggleImageAttachmentInBasket(attachment: ImageAttachment): void {
@@ -898,6 +1161,25 @@ export default function PromptBuilder({
     } finally {
       setBusy(false);
     }
+  }
+
+  function mergePdfAttachments(
+    current: PdfAttachment[],
+    added: PdfAttachment[],
+  ): PdfAttachment[] {
+    const byHash = new Map<string, PdfAttachment>();
+
+    for (const attachment of current) {
+      byHash.set(attachment.sha256, attachment);
+    }
+
+    for (const attachment of added) {
+      byHash.set(attachment.sha256, attachment);
+    }
+
+    return Array.from(byHash.values()).sort((left, right) =>
+      left.fileName.localeCompare(right.fileName),
+    );
   }
 
   function mergeImageAttachments(
@@ -1082,6 +1364,12 @@ export default function PromptBuilder({
     : selectedFilesArray;
 
   const selectedCount = selectedFilesForDisplay.length;
+  const selectedImageAttachmentCount = imageAttachments.filter((attachment) =>
+    selectedImageAttachmentSha256s.has(attachment.sha256),
+  ).length;
+  const selectedPdfAttachmentCount = pdfAttachments.filter((attachment) =>
+    selectedPdfAttachmentSha256s.has(attachment.sha256),
+  ).length;
 
   const selectedTooltipTitle =
     selectedCount === 0
@@ -1248,15 +1536,28 @@ export default function PromptBuilder({
                 </span>
               </Tooltip>
 
-              <Tooltip title="Copy image attachments" arrow>
+              <Tooltip title="Copy selected image attachments" arrow>
                 <span>
                   <IconButton
                     size="small"
-                    aria-label="Copy image attachments"
-                    disabled={busy || imageAttachments.length === 0}
+                    aria-label="Copy selected image attachments"
+                    disabled={busy || selectedImageAttachmentCount === 0}
                     onClick={() => void copyImageAttachments()}
                   >
                     <ImageOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Tooltip title="Copy selected PDF attachments" arrow>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label="Copy selected PDF attachments"
+                    disabled={busy || selectedPdfAttachmentCount === 0}
+                    onClick={() => void copyPdfAttachments()}
+                  >
+                    <PictureAsPdfOutlinedIcon fontSize="small" />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -1354,13 +1655,27 @@ export default function PromptBuilder({
         </Box>
 
         <ImageAttachmentPanel
-          basket={imageAttachments}
+          attachments={imageAttachments}
+          selectedSha256s={selectedImageAttachmentSha256s}
           archiveCount={imageArchive.length}
           disabled={busy}
-          onClearArchive={() => setArchiveClearConfirmOpen(true)}
           onDropFiles={addDroppedImageFiles}
-          onOpenArchive={() => setImageArchiveOpen(true)}
+          onToggle={toggleImageAttachmentSelection}
           onRemove={removeImageAttachment}
+          onOpenArchive={() => setImageArchiveOpen(true)}
+          onClearArchive={() => setArchiveClearConfirmOpen(true)}
+        />
+
+        <PdfAttachmentPanel
+          attachments={pdfAttachments}
+          selectedSha256s={selectedPdfAttachmentSha256s}
+          archiveCount={pdfArchive.length}
+          disabled={busy}
+          onDropFiles={addDroppedPdfFiles}
+          onToggle={togglePdfAttachmentSelection}
+          onRemove={removePdfAttachment}
+          onOpenArchive={() => setPdfArchiveOpen(true)}
+          onClearArchive={() => setPdfArchiveClearConfirmOpen(true)}
         />
 
         <ImageArchiveDialog
@@ -1371,6 +1686,75 @@ export default function PromptBuilder({
           onRequestDelete={setArchiveDeleteTarget}
           onToggle={toggleImageAttachmentInBasket}
         />
+
+        <PdfArchiveDialog
+          open={pdfArchiveOpen}
+          archive={pdfArchive}
+          basket={pdfAttachments}
+          onClose={() => setPdfArchiveOpen(false)}
+          onRequestDelete={setPdfArchiveDeleteTarget}
+          onToggle={togglePdfAttachmentInBasket}
+        />
+
+        <Dialog
+          open={pdfArchiveDeleteTarget !== null}
+          onClose={() => setPdfArchiveDeleteTarget(null)}
+          fullWidth
+          maxWidth="xs"
+        >
+          <DialogTitle>Delete PDF?</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              {pdfArchiveDeleteTarget
+                ? `Delete "${pdfArchiveDeleteTarget.fileName}" from the project PDF archive?`
+                : "Delete this PDF from the project PDF archive?"}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setPdfArchiveDeleteTarget(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              color="error"
+              variant="contained"
+              disabled={busy || !pdfArchiveDeleteTarget}
+              onClick={() => {
+                if (pdfArchiveDeleteTarget) {
+                  void deletePdfFromArchive(pdfArchiveDeleteTarget);
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={pdfArchiveClearConfirmOpen}
+          onClose={() => setPdfArchiveClearConfirmOpen(false)}
+          fullWidth
+          maxWidth="xs"
+        >
+          <DialogTitle>Clear PDF archive?</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              Delete all PDFs from this project's PDF archive and clear the prompt basket?
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setPdfArchiveClearConfirmOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              color="error"
+              variant="contained"
+              disabled={busy || pdfArchive.length === 0}
+              onClick={() => void clearPdfArchive()}
+            >
+              Clear
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         <Dialog
           open={archiveDeleteTarget !== null}
@@ -1872,23 +2256,27 @@ function LinearBusy() {
 }
 
 interface ImageAttachmentPanelProps {
-  basket: ImageAttachment[];
+  attachments: ImageAttachment[];
+  selectedSha256s: ReadonlySet<string>;
   archiveCount: number;
   disabled: boolean;
-  onClearArchive: () => void;
   onDropFiles: (files: File[]) => Promise<void>;
-  onOpenArchive: () => void;
+  onToggle: (sha256: string) => void;
   onRemove: (sha256: string) => void;
+  onOpenArchive: () => void;
+  onClearArchive: () => void;
 }
 
 function ImageAttachmentPanel({
-  basket,
+  attachments,
+  selectedSha256s,
   archiveCount,
   disabled,
-  onClearArchive,
   onDropFiles,
-  onOpenArchive,
+  onToggle,
   onRemove,
+  onOpenArchive,
+  onClearArchive,
 }: ImageAttachmentPanelProps): JSX.Element {
   function handleDragOver(event: ReactDragEvent<HTMLDivElement>): void {
     event.preventDefault();
@@ -1917,55 +2305,242 @@ function ImageAttachmentPanel({
       }}
     >
       <Stack spacing={0.75}>
-        <Stack direction="row" alignItems="center" spacing={1}>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
           <Typography variant="subtitle2" sx={{ flex: 1 }}>
             Images
           </Typography>
 
           <Tooltip title="Open image archive" arrow>
-            <IconButton
-              size="small"
-              aria-label="Open image archive"
-              disabled={disabled || archiveCount === 0}
-              onClick={onOpenArchive}
-            >
-              <ImageOutlinedIcon fontSize="small" />
-            </IconButton>
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Open image archive"
+                disabled={disabled || archiveCount === 0}
+                onClick={onOpenArchive}
+              >
+                <ImageOutlinedIcon fontSize="small" />
+              </IconButton>
+            </span>
           </Tooltip>
 
           <Tooltip title="Clear image archive" arrow>
-            <IconButton
-              size="small"
-              aria-label="Clear image archive"
-              disabled={disabled || archiveCount === 0}
-              onClick={onClearArchive}
-            >
-              <DeleteOutlineIcon fontSize="small" />
-            </IconButton>
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Clear image archive"
+                disabled={disabled || archiveCount === 0}
+                onClick={onClearArchive}
+              >
+                <DeleteOutlineIcon fontSize="small" />
+              </IconButton>
+            </span>
           </Tooltip>
-
-          <Chip size="small" label={`Archive: ${archiveCount}`} />
         </Stack>
 
-        {basket.length === 0 ? (
+        {attachments.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             Drop images here.
           </Typography>
         ) : (
           <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
-            {basket.map((attachment) => (
-              <Chip
-                key={attachment.sha256}
-                size="small"
-                label={`${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
-                onDelete={() => onRemove(attachment.sha256)}
-                deleteIcon={<DeleteOutlineIcon />}
-              />
-            ))}
+            {attachments.map((attachment) => {
+              const selected = selectedSha256s.has(attachment.sha256);
+
+              return (
+                <Tooltip
+                  key={attachment.sha256}
+                  title={selected ? "Selected for clipboard" : "Not selected for clipboard"}
+                  arrow
+                >
+                  <Chip
+                    size="small"
+                    label={`${selected ? "✓ " : ""}${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+                    color={selected ? "primary" : "default"}
+                    variant={selected ? "filled" : "outlined"}
+                    onClick={() => onToggle(attachment.sha256)}
+                    onDelete={() => onRemove(attachment.sha256)}
+                    deleteIcon={<DeleteOutlineIcon />}
+                  />
+                </Tooltip>
+              );
+            })}
           </Stack>
         )}
       </Stack>
     </Box>
+  );
+}
+
+interface PdfAttachmentPanelProps {
+  attachments: PdfAttachment[];
+  selectedSha256s: ReadonlySet<string>;
+  archiveCount: number;
+  disabled: boolean;
+  onDropFiles: (files: File[]) => Promise<void>;
+  onToggle: (sha256: string) => void;
+  onRemove: (sha256: string) => void;
+  onOpenArchive: () => void;
+  onClearArchive: () => void;
+}
+
+function PdfAttachmentPanel({
+  attachments,
+  selectedSha256s,
+  archiveCount,
+  disabled,
+  onDropFiles,
+  onToggle,
+  onRemove,
+  onOpenArchive,
+  onClearArchive,
+}: PdfAttachmentPanelProps): JSX.Element {
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>): void {
+    event.preventDefault();
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLDivElement>): void {
+    event.preventDefault();
+
+    if (disabled) {
+      return;
+    }
+
+    void onDropFiles(Array.from(event.dataTransfer.files));
+  }
+
+  return (
+    <Box
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      sx={{
+        p: 1,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.paper",
+      }}
+    >
+      <Stack spacing={0.75}>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Typography variant="subtitle2" sx={{ flex: 1 }}>
+            PDFs
+          </Typography>
+
+          <Tooltip title="Open PDF archive" arrow>
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Open PDF archive"
+                disabled={disabled || archiveCount === 0}
+                onClick={onOpenArchive}
+              >
+                <PictureAsPdfOutlinedIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+
+          <Tooltip title="Clear PDF archive" arrow>
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Clear PDF archive"
+                disabled={disabled || archiveCount === 0}
+                onClick={onClearArchive}
+              >
+                <DeleteOutlineIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Stack>
+
+        {attachments.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            Drop PDFs here.
+          </Typography>
+        ) : (
+          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
+            {attachments.map((attachment) => {
+              const selected = selectedSha256s.has(attachment.sha256);
+
+              return (
+                <Tooltip
+                  key={attachment.sha256}
+                  title={selected ? "Selected for clipboard" : "Not selected for clipboard"}
+                  arrow
+                >
+                  <Chip
+                    size="small"
+                    label={`${selected ? "✓ " : ""}${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+                    color={selected ? "primary" : "default"}
+                    variant={selected ? "filled" : "outlined"}
+                    onClick={() => onToggle(attachment.sha256)}
+                    onDelete={() => onRemove(attachment.sha256)}
+                    deleteIcon={<DeleteOutlineIcon />}
+                  />
+                </Tooltip>
+              );
+            })}
+          </Stack>
+        )}
+      </Stack>
+    </Box>
+  );
+}
+
+interface PdfArchiveDialogProps {
+  open: boolean;
+  archive: PdfAttachment[];
+  basket: PdfAttachment[];
+  onClose: () => void;
+  onRequestDelete: (attachment: PdfAttachment) => void;
+  onToggle: (attachment: PdfAttachment) => void;
+}
+
+function PdfArchiveDialog({
+  open,
+  archive,
+  basket,
+  onClose,
+  onRequestDelete,
+  onToggle,
+}: PdfArchiveDialogProps): JSX.Element {
+  const basketHashes = new Set(basket.map((attachment) => attachment.sha256));
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>PDF archive</DialogTitle>
+      <DialogContent dividers>
+        {archive.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            No archived PDFs.
+          </Typography>
+        ) : (
+          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
+            {archive.map((attachment) => {
+              const selected = basketHashes.has(attachment.sha256);
+
+              return (
+                <Tooltip
+                  key={attachment.sha256}
+                  title={selected ? "In prompt basket" : "Add to prompt basket"}
+                  arrow
+                >
+                  <Chip
+                    size="small"
+                    label={`${selected ? "✓ " : ""}${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+                    color={selected ? "primary" : "default"}
+                    variant={selected ? "filled" : "outlined"}
+                    onClick={() => onToggle(attachment)}
+                    onDelete={() => onRequestDelete(attachment)}
+                    deleteIcon={<DeleteOutlineIcon />}
+                  />
+                </Tooltip>
+              );
+            })}
+          </Stack>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1994,32 +2569,34 @@ function ImageArchiveDialog({
       <DialogContent dividers>
         {archive.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No images.
+            No archived images.
           </Typography>
         ) : (
-          <Stack spacing={0.75} sx={{ maxHeight: 420, overflow: "auto" }}>
+          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
             {archive.map((attachment) => {
-              const inBasket = basketHashes.has(attachment.sha256);
+              const selected = basketHashes.has(attachment.sha256);
 
               return (
-                <Chip
+                <Tooltip
                   key={attachment.sha256}
-                  label={`${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
-                  variant={inBasket ? "filled" : "outlined"}
-                  color={inBasket ? "primary" : "default"}
-                  onClick={() => onToggle(attachment)}
-                  onDelete={() => onRequestDelete(attachment)}
-                  deleteIcon={<DeleteOutlineIcon />}
-                  title={attachment.storedPath}
-                />
+                  title={selected ? "In prompt basket" : "Add to prompt basket"}
+                  arrow
+                >
+                  <Chip
+                    size="small"
+                    label={`${selected ? "✓ " : ""}${attachment.fileName}  ${formatBytes(attachment.sizeBytes)}`}
+                    color={selected ? "primary" : "default"}
+                    variant={selected ? "filled" : "outlined"}
+                    onClick={() => onToggle(attachment)}
+                    onDelete={() => onRequestDelete(attachment)}
+                    deleteIcon={<DeleteOutlineIcon />}
+                  />
+                </Tooltip>
               );
             })}
           </Stack>
         )}
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-      </DialogActions>
     </Dialog>
   );
 }
