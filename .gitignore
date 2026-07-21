@@ -22,3 +22,21 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+**/src-tauri
+
+**/out
+
+# Electron build output
+apps/desktop/out/
+apps/desktop/release/
+apps/desktop/dist/
+
+# Workspace package build output
+apps/*/dist/
+packages/*/dist/
+
+# Local secrets
+.env.local
+
+**/llm.config.json

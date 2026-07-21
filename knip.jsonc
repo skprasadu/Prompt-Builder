@@ -1,0 +1,51 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "tools/*.mjs"
+      ],
+      "project": [
+        "tools/**/*.mjs"
+      ]
+    },
+    "apps/desktop": {
+      "entry": [
+        "electron.vite.config.ts",
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/main.tsx"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}"
+      ]
+    },
+    "apps/prompt-sync-api": {
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
+    "packages/design-system": {
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
+    "packages/prompt-builder-contracts": {
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
+    "packages/prompt-builder-core": {
+      "project": [
+        "src/**/*.ts"
+      ]
+    }
+  },
+  "ignoreDependencies": [
+    "electron"
+  ],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  }
+}
