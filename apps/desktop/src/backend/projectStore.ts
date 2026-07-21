@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +13,13 @@ export interface LocalProjectRecord {
   defaultSystemPromptPath: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeleteLocalProjectResult {
+  projectId: string;
+  deleted: boolean;
+  deletedPath: string;
+  rootPath: string;
 }
 
 const RAPID_PROMPT_DIR = ".rapid_prompt";
@@ -116,6 +123,30 @@ export async function createLocalProject(args: {
   return record;
 }
 
+export async function deleteLocalProject(projectId: string): Promise<DeleteLocalProjectResult> {
+  const normalizedProjectId = normalizeProjectId(projectId);
+  const record = await getLocalProject(normalizedProjectId);
+  const projectsRoot = path.resolve(rapidPromptHome(), PROJECTS_DIR);
+  const deletedPath = path.resolve(projectDir(normalizedProjectId));
+  const relativeTarget = path.relative(projectsRoot, deletedPath);
+
+  if (!relativeTarget || relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+    throw new Error(`Refusing to delete project outside Rapid Prompt storage: ${deletedPath}`);
+  }
+
+  await rm(deletedPath, {
+    recursive: true,
+    force: true,
+  });
+
+  return {
+    projectId: record.id,
+    deleted: true,
+    deletedPath,
+    rootPath: record.rootPath,
+  };
+}
+
 async function ensureRapidPromptHome(): Promise<void> {
   await mkdir(path.join(rapidPromptHome(), PROJECTS_DIR), { recursive: true });
 }
@@ -151,6 +182,22 @@ function normalizeProjectName(raw: string): string {
   }
 
   return "Untitled Project";
+}
+
+function normalizeProjectId(value: string): string {
+  const trimmed = value.trim();
+
+  if (
+    !trimmed ||
+    trimmed === "." ||
+    trimmed === ".." ||
+    trimmed.includes("/") ||
+    trimmed.includes("\\")
+  ) {
+    throw new Error(`Invalid project id: ${value}`);
+  }
+
+  return trimmed;
 }
 
 function sha256(value: string): string {

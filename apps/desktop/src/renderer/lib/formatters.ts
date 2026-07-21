@@ -10,6 +10,7 @@ export interface OutputOptions {
   // NEW: when in Excel/Block mode we add one focused unit
   unit?: { title?: string; body: string } | null;
   systemPrompt?: string; // NEW
+  memoryContext?: string;
 }
 
 export function formatOutput(
@@ -23,6 +24,11 @@ export function formatOutput(
   const sys = (options.systemPrompt ?? "").trim();
   if (sys.length > 0) {
     parts.push("# System Prompt", "", sys, "");
+  }
+
+  const memoryContext = (options.memoryContext ?? "").trim();
+  if (memoryContext.length > 0) {
+    parts.push("# Previous Iteration Context", "", memoryContext, "");
   }
 
   // Prompt

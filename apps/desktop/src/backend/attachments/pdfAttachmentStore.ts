@@ -17,6 +17,10 @@ import { inflateSync } from "node:zlib";
 
 import { getLocalProject, projectDir } from "../projectStore";
 
+import type {
+  BinaryAttachmentPreview,
+} from "@rapid-prompt/prompt-builder-contracts";
+
 const execFileAsync = promisify(execFile);
 
 const PDF_EXTENSION = ".pdf";
@@ -177,6 +181,31 @@ export async function listPdfAttachments(projectId: string): Promise<PdfAttachme
   return dedupePdfAttachments(attachments).sort((left, right) =>
     right.addedAt.localeCompare(left.addedAt) || left.fileName.localeCompare(right.fileName),
   );
+}
+
+export async function getPdfAttachmentPreview(args: {
+  projectId: string;
+  sha256: string;
+}): Promise<BinaryAttachmentPreview> {
+  const sha256 = normalizeSha256(args.sha256);
+  const attachment = (await listPdfAttachments(args.projectId)).find(
+    (item) => item.sha256 === sha256,
+  );
+
+  if (!attachment) {
+    throw new Error(`PDF attachment not found: ${sha256}`);
+  }
+
+  const data = await readFile(attachment.storedPath);
+
+  return {
+    kind: "pdf",
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    dataUrl: `data:${attachment.mimeType};base64,${data.toString("base64")}`,
+    sizeBytes: attachment.sizeBytes,
+    sha256: attachment.sha256,
+  };
 }
 
 export async function deletePdfAttachment(args: {

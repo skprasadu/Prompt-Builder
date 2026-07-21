@@ -1,11 +1,17 @@
 import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
 import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import {
   Alert,
   Box,
+  Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   IconButton,
   List,
@@ -25,6 +31,13 @@ import type { LocalProject } from "../types/project";
 export interface ProjectLandingProps {
   initialMode?: "open" | "create";
   onEnter: (project: LocalProject) => void;
+}
+
+interface DeleteLocalProjectResult {
+  projectId: string;
+  deleted: boolean;
+  deletedPath: string;
+  rootPath: string;
 }
 
 function toErrorMessage(error: unknown): string {
@@ -67,6 +80,7 @@ export default function ProjectLanding({
   const [rootPath, setRootPath] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState<boolean>(false);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
@@ -161,6 +175,29 @@ export default function ProjectLanding({
       onEnter(project);
     } catch (err: unknown) {
       setError(`Failed to open project: ${toErrorMessage(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelectedProject(): Promise<void> {
+    if (!selectedProject) {
+      setError("Select a project.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      await invoke<DeleteLocalProjectResult>("project:delete", {
+        projectId: selectedProject.id,
+      });
+
+      setDeleteConfirmOpen(false);
+      await refreshProjects();
+    } catch (err: unknown) {
+      setError(`Failed to delete project: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -275,9 +312,22 @@ export default function ProjectLanding({
                   </span>
                 </Tooltip>
 
-                <Typography variant="body2" color="text.secondary" noWrap>
+                <Typography variant="body2" color="text.secondary" noWrap sx={{ flex: 1 }}>
                   {selectedProject?.name ?? "Select a project"}
                 </Typography>
+
+                <Tooltip title="Delete selected project" arrow>
+                  <span>
+                    <IconButton
+                      color="error"
+                      aria-label="Delete selected project"
+                      disabled={busy || !selectedProject}
+                      onClick={() => setDeleteConfirmOpen(true)}
+                    >
+                      <DeleteOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
               </Stack>
             </Stack>
           )}
@@ -333,6 +383,38 @@ export default function ProjectLanding({
               </Stack>
             </Stack>
           )}
+
+          <Dialog
+            open={deleteConfirmOpen}
+            onClose={() => setDeleteConfirmOpen(false)}
+            fullWidth
+            maxWidth="xs"
+          >
+            <DialogTitle>Delete project?</DialogTitle>
+            <DialogContent dividers>
+              <Typography variant="body2">
+                {selectedProject
+                  ? `Delete "${selectedProject.name}" from local Rapid Prompt storage?`
+                  : "Delete this project from local Rapid Prompt storage?"}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                The original project folder will not be deleted.
+              </Typography>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setDeleteConfirmOpen(false)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                color="error"
+                variant="contained"
+                disabled={busy || !selectedProject}
+                onClick={() => void deleteSelectedProject()}
+              >
+                Delete
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Box>
 
         <Box sx={{ p: 3, bgcolor: "background.paper" }}>

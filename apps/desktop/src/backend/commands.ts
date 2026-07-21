@@ -8,10 +8,19 @@ import { readAsciiFiles } from "./ascii";
 import { buildRagContext, createEntry, deleteEntry, getEntryDetail, listEntries, searchEntries } from "./entryStore";
 import { generateInsight } from "./rag/ragService";
 import { getProjectState, saveProjectState } from "./projectStateStore";
-import { createLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
+import { createLocalProject, deleteLocalProject, getLocalProject, listLocalProjects } from "./projectStore";
 import { loadSystemPrompt, saveSystemPrompt } from "./systemPrompt";
-import { addImageAttachments, clearImageAttachments, copyImageAttachmentsToClipboard, deleteImageAttachment, listImageAttachments, type ImageAttachment } from "./attachments/imageAttachmentStore";
-import { addPdfAttachments, clearPdfAttachments, copyPdfAttachmentsToClipboard, deletePdfAttachment, listPdfAttachments, type PdfAttachment } from "./attachments/pdfAttachmentStore";
+import { addImageAttachments, clearImageAttachments, copyImageAttachmentsToClipboard, deleteImageAttachment, getImageAttachmentPreview, listImageAttachments, type ImageAttachment } from "./attachments/imageAttachmentStore";
+import { addPdfAttachments, clearPdfAttachments, copyPdfAttachmentsToClipboard, deletePdfAttachment, getPdfAttachmentPreview, listPdfAttachments, type PdfAttachment } from "./attachments/pdfAttachmentStore";
+import { addPythonPatchAttachments, getPythonPatchAttachmentPreview, listPythonPatchAttachments } from "./attachments/patchAttachmentStore";
+import { closeRequirement, createRequirement, ensureRequirementActiveIteration, getRequirement, listRequirements, saveRequirementIteration, searchRequirements } from "./requirementStore";
+import {
+  closeRequirementIterationWithKnowledge,
+  compileRequirementPrompt,
+  extractRequirementIterationKnowledge,
+  prepareRequirementCloseout,
+  refreshRequirementIterationMemories,
+} from "./requirementIntelligenceService";
 
 type CommandArgs = Record<string, unknown>;
 type EntryPurpose = "software_implementation" | "research";
@@ -92,6 +101,9 @@ export function registerCommandHandlers(): void {
         case "project:get":
           return getLocalProject(requiredString(args, "projectId"));
 
+        case "project:delete":
+          return deleteLocalProject(requiredString(args, "projectId"));
+
         case "project:get_state":
           return getProjectState(requiredString(args, "projectId"));
 
@@ -101,6 +113,140 @@ export function registerCommandHandlers(): void {
             state: requiredObject(args, "state"),
           });
 
+        case "requirement:create":
+          return createRequirement({
+            projectId: requiredString(args, "projectId"),
+            title: requiredString(args, "title"),
+            objective: requiredString(args, "objective"),
+          });
+
+        case "requirement:list":
+          return listRequirements(requiredString(args, "projectId"));
+
+        case "requirement:get":
+          return getRequirement({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+          });
+
+        case "requirement:ensure_active_iteration":
+          return ensureRequirementActiveIteration({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+          });
+
+        case "requirement:save_iteration":
+          return saveRequirementIteration({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+            iterationId: requiredString(args, "iterationId"),
+            instruction: optionalString(args, "instruction") ?? "",
+            assembledPrompt: optionalString(args, "assembledPrompt") ?? "",
+            aiOutput: optionalString(args, "aiOutput") ?? "",
+            selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
+            imageAttachmentSha256s:
+              optionalStringArray(args, "imageAttachmentSha256s") ?? [],
+            pdfAttachmentSha256s:
+              optionalStringArray(args, "pdfAttachmentSha256s") ?? [],
+            patchAttachmentSha256s:
+              optionalStringArray(args, "patchAttachmentSha256s") ?? [],
+            patchChangedPaths:
+              optionalStringArray(args, "patchChangedPaths") ?? [],
+          });
+
+        case "requirement:extract_iteration_knowledge":
+          return extractRequirementIterationKnowledge({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+            iterationId: requiredString(args, "iterationId"),
+            instruction: optionalString(args, "instruction") ?? "",
+            aiOutput: requiredString(args, "aiOutput"),
+            selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
+            patchAttachmentSha256s:
+              optionalStringArray(args, "patchAttachmentSha256s") ?? [],
+            patchChangedPaths:
+              optionalStringArray(args, "patchChangedPaths") ?? [],
+          });
+
+        case "requirement:refresh_iteration_memories":
+          return refreshRequirementIterationMemories({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+          });
+
+        case "requirement:compile_prompt":
+          return compileRequirementPrompt({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+            instruction: requiredString(args, "instruction"),
+            baseSystemPrompt: optionalString(args, "baseSystemPrompt") ?? "",
+            selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
+          });
+
+        case "requirement:prepare_closeout":
+          return prepareRequirementCloseout({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+          });
+
+        case "requirement:close_iteration":
+          return closeRequirementIterationWithKnowledge({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+            iterationId: requiredString(args, "iterationId"),
+            instruction: requiredString(args, "instruction"),
+            assembledPrompt: optionalString(args, "assembledPrompt") ?? "",
+            aiOutput: optionalString(args, "aiOutput") ?? "",
+            selectedPaths: optionalStringArray(args, "selectedPaths") ?? [],
+            imageAttachmentSha256s:
+              optionalStringArray(args, "imageAttachmentSha256s") ?? [],
+            pdfAttachmentSha256s:
+              optionalStringArray(args, "pdfAttachmentSha256s") ?? [],
+            patchAttachmentSha256s:
+              optionalStringArray(args, "patchAttachmentSha256s") ?? [],
+            patchChangedPaths:
+              optionalStringArray(args, "patchChangedPaths") ?? [],
+          });
+
+        case "requirement:close":
+          return closeRequirement({
+            projectId: requiredString(args, "projectId"),
+            requirementId: requiredString(args, "requirementId"),
+            outcome: requiredString(args, "outcome"),
+            decisions: optionalStringArray(args, "decisions") ?? [],
+            reusablePatterns: optionalStringArray(args, "reusablePatterns") ?? [],
+            rejectedApproaches: optionalStringArray(args, "rejectedApproaches") ?? [],
+          });
+
+        case "requirement:search": {
+          const limit = optionalNumber(args, "limit");
+          return searchRequirements({
+            projectId: requiredString(args, "projectId"),
+            query: requiredString(args, "query"),
+            ...(limit !== undefined ? { limit } : {}),
+          });
+        }
+
+        case "attachments:add_python_patches":
+          return addPythonPatchAttachments({
+            projectId: requiredString(args, "projectId"),
+            paths: requiredStringArray(args, "paths"),
+          });
+
+        case "attachments:list_python_patches":
+          return listPythonPatchAttachments(
+            requiredString(args, "projectId"),
+          );
+
+        case "attachments:preview_python_patch": {
+          const maxCharacters = optionalNumber(args, "maxCharacters");
+          return getPythonPatchAttachmentPreview({
+            projectId: requiredString(args, "projectId"),
+            sha256: requiredString(args, "sha256"),
+            ...(maxCharacters !== undefined ? { maxCharacters } : {}),
+          });
+        }
+
         case "attachments:add_images":
           return addImageAttachments({
             projectId: requiredString(args, "projectId"),
@@ -109,6 +255,12 @@ export function registerCommandHandlers(): void {
 
         case "attachments:list_images":
           return listImageAttachments(requiredString(args, "projectId"));
+
+        case "attachments:preview_image":
+          return getImageAttachmentPreview({
+            projectId: requiredString(args, "projectId"),
+            sha256: requiredString(args, "sha256"),
+          });
 
         case "attachments:delete_image":
           return deleteImageAttachment({
@@ -130,6 +282,12 @@ export function registerCommandHandlers(): void {
 
         case "attachments:list_pdfs":
           return listPdfAttachments(requiredString(args, "projectId"));
+
+        case "attachments:preview_pdf":
+          return getPdfAttachmentPreview({
+            projectId: requiredString(args, "projectId"),
+            sha256: requiredString(args, "sha256"),
+          });
 
         case "attachments:delete_pdf":
           return deletePdfAttachment({
@@ -432,3 +590,5 @@ function requiredRecordNumber(record: Record<string, unknown>, key: string): num
 
   return value;
 }
+
+

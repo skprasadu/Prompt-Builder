@@ -17,6 +17,10 @@ import { promisify } from "node:util";
 
 import { getLocalProject, projectDir } from "../projectStore";
 
+import type {
+  BinaryAttachmentPreview,
+} from "@rapid-prompt/prompt-builder-contracts";
+
 const execFileAsync = promisify(execFile);
 
 const IMAGE_EXTENSIONS = new Set([
@@ -196,6 +200,31 @@ export async function listImageAttachments(projectId: string): Promise<ImageAtta
   return dedupeAttachments(attachments).sort((left, right) =>
     right.addedAt.localeCompare(left.addedAt) || left.fileName.localeCompare(right.fileName),
   );
+}
+
+export async function getImageAttachmentPreview(args: {
+  projectId: string;
+  sha256: string;
+}): Promise<BinaryAttachmentPreview> {
+  const sha256 = normalizeSha256(args.sha256);
+  const attachment = (await listImageAttachments(args.projectId)).find(
+    (item) => item.sha256 === sha256,
+  );
+
+  if (!attachment) {
+    throw new Error(`Image attachment not found: ${sha256}`);
+  }
+
+  const data = await readFile(attachment.storedPath);
+
+  return {
+    kind: "image",
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    dataUrl: `data:${attachment.mimeType};base64,${data.toString("base64")}`,
+    sizeBytes: attachment.sizeBytes,
+    sha256: attachment.sha256,
+  };
 }
 
 export async function deleteImageAttachment(args: {

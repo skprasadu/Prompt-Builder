@@ -39,3 +39,4 @@ export interface ApiAcceptedResponse {
 }
 export * from "./entries.js";
 export * from "./search.js";
+export * from "./requirements.js";
